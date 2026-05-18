@@ -6,13 +6,26 @@ from pydantic import BaseModel
 from typing import List
 import logging
 
-from database import SessionLocal, Job, JobSupplierState
-from scheduler import start_scheduler
+from backend.database import SessionLocal, Job, JobSupplierState
+from backend.scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import pandas as pd
+import uvicorn
+from typing import List, Dict, Any
+
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    start_scheduler()
+    yield
+
+app = FastAPI(title="EMAIL SERVICE API",lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,9 +42,7 @@ def get_db():
     finally:
         db.close()
 
-@app.on_event("startup")
-def on_startup():
-    start_scheduler()
+
 
 @app.get("/api/suppliers")
 def get_suppliers():
@@ -86,3 +97,7 @@ def refresh_insights(job_id: int, db: Session = Depends(get_db)):
         "message": "Insights refreshed",
         "new_insights": []
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

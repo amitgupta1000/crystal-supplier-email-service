@@ -1,9 +1,9 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
-from database import SessionLocal, Job
+from backend.database import SessionLocal, Job
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from gcs_utils import upload_job_summary
+from backend.gcs_utils import upload_job_summary
 
 logger = logging.getLogger(__name__)
 
