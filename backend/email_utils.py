@@ -144,10 +144,106 @@ def fetch_unread_replies(domains: List[str]) -> List[dict]:
     logger.info(f"Querying Gmail: {query}")
     
     try:
-        results = service.users().messages().list(userId='me', q=query).execute()
+        results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
         messages = results.get('messages', [])
         
         extracted_emails = []
+        
+        for message in messages:
+            try:
+                msg = service.users().messages().get(userId='me', id=message['id'], format='full').execute()
+                headers = msg['payload']['headers']
+                
+                email_data = {
+                    'id': msg['id'],
+                    'from': next((h['value'] for h in headers if h['name'] == 'From'), ''),
+                    'subject': next((h['value'] for h in headers if h['name'] == 'Subject'), ''),
+                    'date': next((h['value'] for h in headers if h['name'] == 'Date'), ''),
+                    'body': _get_message_body(msg)
+                }
+                extracted_emails.append(email_data)
+                logger.info(f"Extracted email from {email_data['from']}: {email_data['subject']}")
+                
+            except Exception as e:
+                logger.error(f"Error extracting email {message['id']}: {e}")
+                continue
+        
+        return extracted_emails
+        
+    except HttpError as error:
+        logger.error(f"Gmail API error: {error}")
+        return []
+    except Exception as e:
+        logger.exception(f"Unexpected error fetching unread replies: {e}")
+        return []
+
+
+def _get_message_body(message: dict) -> str:
+    """Extracts the plain text or HTML body from a Gmail message."""
+    try:
+        if 'parts' in message['payload']:
+            # Multipart message
+            for part in message['payload']['parts']:
+                if part['mimeType'] == 'text/plain':
+                    if 'data' in part['body']:
+                        return base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+                elif part['mimeType'] == 'text/html':
+                    if 'data' in part['body']:
+                        return base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
+        elif 'body' in message['payload']:
+            # Simple message
+            if 'data' in message['payload']['body']:
+                return base64.urlsafe_b64decode(message['payload']['body']['data']).decode('utf-8')
+        
+        return ""
+    except Exception as e:
+        logger.error(f"Error extracting message body: {e}")
+        return ""
+
+
+def send_reminder_email(supplier_email: str, supplier_name: str, chemical_query: str) -> bool:
+    """Sends a reminder email to a supplier who hasn't responded."""
+    subject = f"Reminder: Request for Quote - {chemical_query}"
+    
+    body = f"""
+    <p>Dear {supplier_name},</p>
+    
+    <p>I hope this email finds you well.</p>
+    
+    <p>I wanted to follow up on my previous request for a quote regarding:</p>
+    <p><strong>{chemical_query}</strong></p>
+    
+    <p>I would greatly appreciate if you could provide us with a quote at your earliest convenience. 
+    If you have any questions or need clarification, please don't hesitate to reach out.</p>
+    
+    <p>Thank you for your attention to this matter.</p>
+    
+    <p>Best regards,<br>
+    Amit<br>
+    Procurement Team</p>
+    """
+    
+    return send_email_with_attachments(subject, body, supplier_email)
+
+
+def mark_message_as_read(message_id: str) -> bool:
+    """Marks a Gmail message as read."""
+    if not GOOGLE_API_CLIENT_AVAILABLE:
+        logger.error("Google API client libraries not installed.")
+        return False
+    
+    try:
+        service = get_gmail_read_service()
+        service.users().messages().modify(
+            userId='me',
+            id=message_id,
+            body={'removeLabelIds': ['UNREAD']}
+        ).execute()
+        logger.info(f"Marked message {message_id} as read")
+        return True
+    except Exception as e:
+        logger.error(f"Error marking message as read: {e}")
+        return False
         for msg in messages:
             msg_id = msg['id']
             msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()

@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: crystal-db
+    environment:
+      POSTGRES_DB: crystal_db
+      POSTGRES_USER: emailservice
+      POSTGRES_PASSWORD: devpassword123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emailservice"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - crystal-network
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crystal-backend
+    environment:
+      DATABASE_URL: postgresql://emailservice:devpassword123@db:5432/crystal_db
+      GOOGLE_APPLICATION_CREDENTIALS: /app/sa-key.json
+      GOOGLE_CLOUD_PROJECT: your-project-id
+      GMAIL_IMPERSONATE_USER: noreply@yourdomain.com
+      EMAIL_SENDER: noreply@yourdomain.com
+      EMAIL_RECIPIENTS: admin@yourdomain.com
+      GCS_BUCKET_NAME: crystal-supplier-email-data
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./main.py:/app/main.py
+      - ./suppliers.csv:/app/suppliers.csv
+      - ./message_template.csv:/app/message_template.csv
+      - ./reminder_template.csv:/app/reminder_template.csv
+      - ./sa-key.json:/app/sa-key.json:ro
+    command: uvicorn main:app --reload --host 0.0.0.0 --port 8000
+    networks:
+      - crystal-network
+    restart: unless-stopped
+
+  # Frontend (React with Vite)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: crystal-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+    environment:
+      VITE_API_URL: http://localhost:8000
+    command: npm run dev
+    networks:
+      - crystal-network
+    restart: unless-stopped
+
+  # Optional: Adminer for database management (http://localhost:8080)
+  adminer:
+    image: adminer:latest
+    container_name: crystal-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    networks:
+      - crystal-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  crystal-network:
+    driver: bridge
