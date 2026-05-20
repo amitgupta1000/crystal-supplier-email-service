@@ -20,6 +20,9 @@ function App() {
   const [launching, setLaunching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [userEmail, setUserEmail] = useState(() => 
+    localStorage.getItem('userEmail') || 'amit.gupta@coralbayadvisory.com'
+  );
 
   const PRESETS = [
     "20,000 MT Methanol CFR Singapore - delivery late June 2026",
@@ -118,6 +121,7 @@ function App() {
   const handleLaunchCampaign = async () => {
     if (!query.trim()) return showToast('Please enter a chemical procurement query', 'error');
     if (selectedSuppliers.size === 0) return showToast('Please select at least one supplier', 'error');
+    if (!userEmail.trim()) return showToast('Please enter your email address', 'error');
 
     setLaunching(true);
     try {
@@ -126,10 +130,13 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           chemical_query: query,
-          supplier_emails: Array.from(selectedSuppliers)
+          supplier_emails: Array.from(selectedSuppliers),
+          user_email: userEmail
         })
       });
       const data = await res.json();
+      // Save user email to localStorage
+      localStorage.setItem('userEmail', userEmail);
       showToast(`Outreach Campaign #${data.job_id} launched successfully!`);
       setQuery('');
       setSelectedSuppliers(new Set());
@@ -256,6 +263,18 @@ function App() {
           </div>
 
           <div className="flex-1 flex flex-col justify-between min-h-0 space-y-4">
+            
+            {/* User Email */}
+            <div className="shrink-0 space-y-2">
+              <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Your Email (for notifications)</span>
+              <input 
+                type="email"
+                value={userEmail}
+                onChange={(e) => setUserEmail(e.target.value)}
+                placeholder="your.email@company.com"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-purple-400 glow-pastel-indigo placeholder:text-slate-400"
+              />
+            </div>
             
             {/* Input Specs */}
             <div className="shrink-0 space-y-2">

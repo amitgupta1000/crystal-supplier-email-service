@@ -37,29 +37,37 @@ def is_email_configured() -> bool:
     return True
 
 def get_gmail_service(scopes: List[str]):
-    """Initializes and returns the Gmail API service using Domain-Wide Delegation."""
+    """
+    Initializes and returns the Gmail API service using Application Default Credentials.
+    Credentials are automatically discovered from gcloud CLI, GCP service account, or environment variables.
+    """
+    # If GOOGLE_APPLICATION_CREDENTIALS is set to a non-existent file, unset it
+    # so that google.auth.default() will use other auth methods
     creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+    if creds_path:
+        creds_path = os.path.expanduser(creds_path)
+        if not os.path.exists(creds_path):
+            logger.debug(f"GOOGLE_APPLICATION_CREDENTIALS points to non-existent file {creds_path}, unsetting to use other auth methods")
+            os.environ.pop('GOOGLE_APPLICATION_CREDENTIALS', None)
     
-    if creds_path and os.path.exists(creds_path):
-        creds = service_account.Credentials.from_service_account_file(
-            creds_path, scopes=scopes
-        )
-        delegated_creds = creds.with_subject(GMAIL_IMPERSONATE_USER)
-        return build('gmail', 'v1', credentials=delegated_creds, cache_discovery=False)
-    
+    # Use Application Default Credentials (gcloud, environment variables, or GCP service account)
     creds, _ = google.auth.default(scopes=scopes)
+    
+    # If using a service account (has with_subject method), delegate to the impersonate user
     if hasattr(creds, 'with_subject'):
         delegated_creds = creds.with_subject(GMAIL_IMPERSONATE_USER)
         return build('gmail', 'v1', credentials=delegated_creds, cache_discovery=False)
     else:
-        # Fallback for standard OAuth2 credentials (e.g. for testing locally without DWD)
+        # Standard OAuth2 credentials
         return build('gmail', 'v1', credentials=creds, cache_discovery=False)
 
 def get_gmail_send_service():
-    return get_gmail_service(['https://www.googleapis.com/auth/gmail.send'])
+    # Use the full Gmail API scope for sending emails
+    return get_gmail_service(['https://www.googleapis.com/auth/gmail.modify'])
 
 def get_gmail_read_service():
-    return get_gmail_service(['https://www.googleapis.com/auth/gmail.readonly'])
+    # Use the full Gmail API scope for reading emails
+    return get_gmail_service(['https://www.googleapis.com/auth/gmail.modify'])
 
 async def send_email_with_attachments(
     subject: str,

@@ -223,7 +223,7 @@ pip install -r requirements.txt
 npm install --prefix frontend
 
 # 2. Set environment variables
-export CLOUD_SQL_PASSWORD="Crystal@012345"
+export CLOUD_SQL_PASSWORD="Crystal12345"
 export GOOGLE_API_KEY="your-gemini-api-key"
 
 # 3. Run backend locally (with SQLite)

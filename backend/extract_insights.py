@@ -7,7 +7,7 @@ from .email_utils import fetch_unread_replies
 from pydantic import BaseModel
 
 try:
-    import google.generativeai as genai
+    import google.genai as genai
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
@@ -16,15 +16,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Generative AI
+genai_client = None
 if GENAI_AVAILABLE:
     # Try GOOGLE_API_KEY first, then fall back to GOOGLE_GENAI_API_KEY
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
     if api_key:
-        genai.configure(api_key=api_key)
-
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+        genai_client = genai.Client(api_key=api_key)
+    else:
+        logger.warning("GOOGLE_API_KEY or GOOGLE_GENAI_API_KEY not set. Insight extraction will be disabled.")
 else:
-    logger.warning("google-generativeai library not found. Insight extraction will be disabled.")
+    logger.warning("google.genai library not found. Insight extraction will be disabled.")
 
 
 class InsightData(BaseModel):
@@ -43,16 +44,11 @@ async def extract_insights_from_email(email_subject: str, email_body: str) -> Op
     Uses Google Generative AI to extract structured insights from an email.
     Returns an InsightData object or None if extraction fails.
     """
-    if not GENAI_AVAILABLE:
-        logger.error("google-generativeai is not installed")
-        return None
-    
-    if not (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")):
-        logger.warning("GOOGLE_API_KEY or GOOGLE_GENAI_API_KEY not set - cannot extract insights")
+    if not GENAI_AVAILABLE or not genai_client:
+        logger.error("google.genai is not available or not configured")
         return None
     
     try:
-        model = model or genai.GenerativeModel("gemini-2.5-flash-lite")
         
         prompt = f"""
         Extract the following information from this supplier email and return as JSON:
@@ -90,7 +86,12 @@ async def extract_insights_from_email(email_subject: str, email_body: str) -> Op
         Return ONLY valid JSON, no other text. If a field is not mentioned or cannot be clearly extracted, set it to null.
         """
         
-        response = await asyncio.to_thread(lambda: model.generate_content(prompt))
+        response = await asyncio.to_thread(
+            lambda: genai_client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=prompt
+            )
+        )
         
         if response.text:
             try:

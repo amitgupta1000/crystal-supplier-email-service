@@ -6,14 +6,9 @@ from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import List, Optional, AsyncGenerator
 
-# Expand home directory in GOOGLE_APPLICATION_CREDENTIALS if present
-if gcp_creds := os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-    expanded_path = os.path.expanduser(gcp_creds)
-    if os.path.exists(expanded_path):
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = expanded_path
-        print(f"✅ GCP Credentials found at: {expanded_path}")
-    else:
-        print(f"⚠️  GCP Credentials path not found: {expanded_path}")
+# Note: GCP credentials are handled via Application Default Credentials (ADC)
+# They can be provided through environment variables, gcloud CLI, or GCP service account
+# No explicit credential file checks needed here
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -343,6 +338,7 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
         insights_list = await process_supplier_responses(domains, job_id)
         
         inserted_count = 0
+        new_insights = []  # Initialize before use
         for insight_data in insights_list:
             # Check if insight already exists
             existing_query = select(Insight).where(

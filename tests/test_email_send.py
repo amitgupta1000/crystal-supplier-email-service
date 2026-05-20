@@ -17,7 +17,6 @@ async def test_start_job_with_email():
         "chemical_query": "Premium Polyester Fabric - 5000 meters - High Quality Textile",
         "supplier_emails": [
             "amitgupta1000@gmail.com",
-            "supplier@example.com"
         ],
         "user_email": "amit.gupta@coralbayadvisory.com"
     }

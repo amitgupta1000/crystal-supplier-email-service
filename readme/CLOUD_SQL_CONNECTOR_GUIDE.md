@@ -231,7 +231,7 @@ This setup works for:
 
 1. **Run the server:**
    ```bash
-   $env:CLOUD_SQL_PASSWORD = "Crystal@012345"; python main.py
+   $env:CLOUD_SQL_PASSWORD = "Crystal12345"; python main.py
    ```
 
 2. **Test the API:**

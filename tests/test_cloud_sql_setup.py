@@ -24,7 +24,7 @@ def test_cloud_sql_with_psycopg2():
     HOST = "35.200.192.16"
     DATABASE = "inventory"
     USER = "postgres"
-    PASSWORD = os.environ.get("CLOUD_SQL_PASSWORD", "")
+    PASSWORD = os.environ.get("CLOUD_SQL_PASSWORD", "Crystal12345")  # Default for testing - replace with env variable in production
     
     if not PASSWORD:
         print("❌ CLOUD_SQL_PASSWORD not set in environment")

@@ -7,11 +7,11 @@ Run with: pytest test_api.py -v
 import pytest
 from fastapi.testclient import TestClient
 from main import app
-from backend.database import Base, engine, SessionLocal
+from backend.database import Base, engine, AsyncSessionLocal
 import json
 
-# Create test database
-Base.metadata.create_all(bind=engine)
+# Note: Database initialization is handled by main.py on startup
+# For async engines, use main.init_db() instead of Base.metadata.create_all()
 
 client = TestClient(app)
 

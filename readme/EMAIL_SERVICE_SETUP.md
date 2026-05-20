@@ -59,7 +59,7 @@ cloud-sql-proxy gen-lang-client-0665888431:asia-south1:crystal-inventory-dash \
   --port=5433
 
 # 3. Create the schema (using localhost:5433)
-$env:CLOUD_SQL_PASSWORD = "Crystal@012345"
+$env:CLOUD_SQL_PASSWORD = "Crystal12345"
 $env:CLOUD_SQL_HOST = "localhost"
 $env:CLOUD_SQL_PORT = "5433"
 python backend/setup_email_service.py
@@ -73,7 +73,7 @@ gcloud sql instances patch crystal-inventory-dash \
   --authorized-networks YOUR_IP_ADDRESS
 
 # 2. Create the schema
-$env:CLOUD_SQL_PASSWORD = "Crystal@012345"
+$env:CLOUD_SQL_PASSWORD = "Crystal12345"
 $env:CLOUD_SQL_HOST = "35.200.192.16"
 $env:CLOUD_SQL_PORT = "5432"
 python backend/setup_email_service.py
@@ -245,7 +245,7 @@ DATABASE_URL=postgresql+asyncpg://postgres:PASSWORD@localhost:5433/inventory
 CLOUD_SQL_HOST=localhost
 CLOUD_SQL_PORT=5433
 CLOUD_SQL_USER=postgres
-CLOUD_SQL_PASSWORD=Crystal@012345
+CLOUD_SQL_PASSWORD=Crystal12345
 CLOUD_SQL_DATABASE=inventory
 ```
 
@@ -256,7 +256,7 @@ CLOUD_SQL_DATABASE=inventory
 Once the schema is created, test with:
 
 ```bash
-$env:CLOUD_SQL_PASSWORD = "Crystal@012345"
+$env:CLOUD_SQL_PASSWORD = "Crystal12345"
 python backend/test_email_service.py
 ```
 
