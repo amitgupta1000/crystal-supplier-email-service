@@ -1,42 +1,46 @@
 import os
+import logging
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
-# Cloud SQL PostgreSQL async connection
-# Format: postgresql+asyncpg://user:password@host:port/database
-DATABASE_URL = os.environ.get("DATABASE_URL")
+logger = logging.getLogger(__name__)
 
-if not DATABASE_URL:
-    # Build from individual environment variables
-    host = os.environ.get("CLOUD_SQL_HOST", "35.200.192.16")
-    port = os.environ.get("CLOUD_SQL_PORT", "5432")
-    user = os.environ.get("CLOUD_SQL_USER", "postgres")
-    password = os.environ.get("CLOUD_SQL_PASSWORD")
-    database = os.environ.get("CLOUD_SQL_DATABASE", "inventory")
-    
-    if not password:
-        raise ValueError("CLOUD_SQL_PASSWORD environment variable is required")
-    
-    DATABASE_URL = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+# Build connection string from environment variables
+password = os.environ.get("CLOUD_SQL_PASSWORD")
+if not password:
+    raise ValueError("CLOUD_SQL_PASSWORD environment variable is required")
 
-if not DATABASE_URL.startswith("postgresql+asyncpg://"):
-    raise ValueError("DATABASE_URL must use postgresql+asyncpg:// driver for Cloud SQL")
+host = os.environ.get("CLOUD_SQL_HOST", "35.200.192.16")
+port = os.environ.get("CLOUD_SQL_PORT", "5432")
+user = os.environ.get("CLOUD_SQL_USER", "postgres")
+database = os.environ.get("CLOUD_SQL_DATABASE", "inventory")
 
+# Build connection URL
+DATABASE_URL = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+
+# Create async engine
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     future=True,
     pool_pre_ping=True,
-    connect_args={"ssl": True, "server_settings": {"application_name": "crystal-email-service"}},
+    connect_args={
+        "ssl": True,
+        "server_settings": {"application_name": "crystal-email-service"}
+    },
 )
 
+# Create async session factory
 AsyncSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
 
+# ORM Base
 Base = declarative_base()
+
+logger.info(f"✅ Database initialized: postgresql+asyncpg://{user}:***@{host}:{port}/{database}")
 
 class Job(Base):
     __tablename__ = "jobs"

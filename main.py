@@ -1,9 +1,19 @@
 import csv
 import asyncio
 import os
+from pathlib import Path
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import List, Optional, AsyncGenerator
+
+# Expand home directory in GOOGLE_APPLICATION_CREDENTIALS if present
+if gcp_creds := os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+    expanded_path = os.path.expanduser(gcp_creds)
+    if os.path.exists(expanded_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = expanded_path
+        print(f"✅ GCP Credentials found at: {expanded_path}")
+    else:
+        print(f"⚠️  GCP Credentials path not found: {expanded_path}")
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

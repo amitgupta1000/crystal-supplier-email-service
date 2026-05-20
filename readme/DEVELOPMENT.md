@@ -138,7 +138,8 @@ curl -X POST http://localhost:8000/api/jobs/start \
   -H "Content-Type: application/json" \
   -d '{
     "chemical_query": "20000 MT Methanol CFR Singapore",
-    "supplier_emails": ["supplier1@example.com", "supplier2@example.com"]
+    "supplier_emails": ["supplier1@example.com", "supplier2@example.com"],
+    "user_email": "amit.gupta@coralbayadvisory.com"
   }'
 
 # Refresh insights for a job

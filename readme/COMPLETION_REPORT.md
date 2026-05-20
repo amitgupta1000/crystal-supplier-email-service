@@ -366,7 +366,8 @@ curl -X POST http://localhost:8000/api/jobs/start \
   -H "Content-Type: application/json" \
   -d '{
     "chemical_query": "20000 MT Methanol",
-    "supplier_emails": ["supplier1@ex.com", "supplier2@ex.com"]
+    "supplier_emails": ["supplier1@ex.com", "supplier2@ex.com"],
+    "user_email": "amit.gupta@coralbayadvisory.com"
   }'
 # Returns: job_id = 1
 

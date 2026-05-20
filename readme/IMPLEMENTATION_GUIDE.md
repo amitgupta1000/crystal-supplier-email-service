@@ -210,7 +210,8 @@ response = requests.post(
             "supplier1@example.com",
             "supplier2@example.com",
             "supplier3@example.com"
-        ]
+        ],
+        "user_email": "amit.gupta@coralbayadvisory.com"
     }
 )
 

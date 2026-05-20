@@ -52,7 +52,8 @@ class TestJobEndpoints:
         """Sample job creation request."""
         return {
             "chemical_query": "Test Chemical Query",
-            "supplier_emails": ["test@example.com"]
+            "supplier_emails": ["test@example.com"],
+            "user_email": "amit.gupta@coralbayadvisory.com"
         }
     
     def test_create_job(self, sample_job_request):
