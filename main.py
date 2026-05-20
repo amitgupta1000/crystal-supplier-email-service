@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict
 import logging
 import uvicorn
 
-from backend.database import AsyncSessionLocal, Job, JobSupplierState, Insight, SupplierEmail, Base, engine
+from backend.database import AsyncSessionLocal, Job, JobSupplierState, Insight, SupplierEmail, Base, engine, USE_SQLITE
 from backend.scheduler import start_scheduler
 from backend.email_utils import send_email_with_attachments, send_reminder_email, fetch_unread_replies
 from backend.extract_insights import extract_insights_from_email, process_supplier_responses
@@ -37,8 +37,9 @@ async def init_db():
     """Initialize database tables on startup."""
     try:
         async with engine.begin() as conn:
-            # Create email_service schema if it doesn't exist
-            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS email_service;"))
+            # Only create schema for PostgreSQL
+            if not USE_SQLITE:
+                await conn.execute(text("CREATE SCHEMA IF NOT EXISTS email_service;"))
             # Create all tables from ORM models
             await conn.run_sync(Base.metadata.create_all)
             logger.info("✅ Database initialized successfully")

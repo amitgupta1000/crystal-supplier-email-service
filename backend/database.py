@@ -7,29 +7,35 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Build connection string from environment variables
-password = os.environ.get("CLOUD_SQL_PASSWORD")
-if not password:
-    raise ValueError("CLOUD_SQL_PASSWORD environment variable is required")
+# Determine which database to use
+USE_SQLITE = os.environ.get("USE_SQLITE", "false").lower() == "true"
 
-host = os.environ.get("CLOUD_SQL_HOST", "35.200.192.16")
-port = os.environ.get("CLOUD_SQL_PORT", "5432")
-user = os.environ.get("CLOUD_SQL_USER", "postgres")
-database = os.environ.get("CLOUD_SQL_DATABASE", "inventory")
-
-# Build connection URL
-DATABASE_URL = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+if USE_SQLITE:
+    # Local SQLite for testing
+    DATABASE_URL = "sqlite+aiosqlite:///./jobs.db"
+    logger.info("📊 Using SQLite database: ./jobs.db")
+else:
+    # Cloud SQL PostgreSQL
+    password = os.environ.get("CLOUD_SQL_PASSWORD")
+    if not password:
+        raise ValueError("CLOUD_SQL_PASSWORD environment variable is required")
+    
+    host = os.environ.get("CLOUD_SQL_HOST", "35.200.192.16")
+    port = os.environ.get("CLOUD_SQL_PORT", "5432")
+    user = os.environ.get("CLOUD_SQL_USER", "postgres")
+    database = os.environ.get("CLOUD_SQL_DATABASE", "inventory")
+    
+    # Build connection URL
+    DATABASE_URL = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+    logger.info(f"📊 Using Cloud SQL: postgresql+asyncpg://{user}:***@{host}:{port}/{database}")
 
 # Create async engine
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     future=True,
-    pool_pre_ping=True,
-    connect_args={
-        "ssl": True,
-        "server_settings": {"application_name": "crystal-email-service"}
-    },
+    pool_pre_ping=not USE_SQLITE,  # Only use pool_pre_ping for PostgreSQL
+    **({"connect_args": {"ssl": True, "server_settings": {"application_name": "crystal-email-service"}}} if not USE_SQLITE else {}),
 )
 
 # Create async session factory
@@ -40,11 +46,11 @@ AsyncSessionLocal = async_sessionmaker(
 # ORM Base
 Base = declarative_base()
 
-logger.info(f"✅ Database initialized: postgresql+asyncpg://{user}:***@{host}:{port}/{database}")
+logger.info("✅ Database initialized")
 
 class Job(Base):
     __tablename__ = "jobs"
-    __table_args__ = {"schema": "email_service"}
+    __table_args__ = {"schema": "email_service"} if not USE_SQLITE else {}
     
     id = Column(Integer, primary_key=True, index=True)
     chemical_query = Column(String, index=True)
@@ -64,10 +70,10 @@ class Job(Base):
 
 class JobSupplierState(Base):
     __tablename__ = "job_supplier_states"
-    __table_args__ = {"schema": "email_service"}
+    __table_args__ = {"schema": "email_service"} if not USE_SQLITE else {}
     
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("email_service.jobs.id"), index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id" if USE_SQLITE else "email_service.jobs.id"), index=True)
     company_name = Column(String)
     email_id = Column(String, index=True)
     domain = Column(String)
@@ -81,11 +87,11 @@ class JobSupplierState(Base):
 
 class SupplierEmail(Base):
     __tablename__ = "supplier_emails"
-    __table_args__ = {"schema": "email_service"}
+    __table_args__ = {"schema": "email_service"} if not USE_SQLITE else {}
     
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("email_service.jobs.id"), index=True)
-    supplier_state_id = Column(Integer, ForeignKey("email_service.job_supplier_states.id"), nullable=True)
+    job_id = Column(Integer, ForeignKey("jobs.id" if USE_SQLITE else "email_service.jobs.id"), index=True)
+    supplier_state_id = Column(Integer, ForeignKey("job_supplier_states.id" if USE_SQLITE else "email_service.job_supplier_states.id"), nullable=True)
     email_type = Column(String)  # "outbound" or "inbound"
     from_email = Column(String)
     to_email = Column(String)
@@ -99,10 +105,10 @@ class SupplierEmail(Base):
 
 class Insight(Base):
     __tablename__ = "insights"
-    __table_args__ = {"schema": "email_service"}
+    __table_args__ = {"schema": "email_service"} if not USE_SQLITE else {}
     
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("email_service.jobs.id"), index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id" if USE_SQLITE else "email_service.jobs.id"), index=True)
     supplier = Column(String, index=True)
     contact_person = Column(String, nullable=True)
     product = Column(String, nullable=True)
