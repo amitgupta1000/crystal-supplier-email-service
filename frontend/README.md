@@ -1,16 +1,31 @@
-# React + Vite
+# Crystal Supplier Email Service - Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is the frontend application for the Crystal Supplier Email Service, built with React, Vite, and Tailwind CSS. It provides an intuitive dashboard to manage RFQ campaigns, track supplier responses, and view AI-extracted insights.
 
-Currently, two official plugins are available:
+## Technologies Used
+- **React 19**: UI library
+- **Vite**: Build tool and development server
+- **Tailwind CSS**: Utility-first CSS framework
+- **Lucide React**: Icon library
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Getting Started
 
-## React Compiler
+### Prerequisites
+Make sure you have Node.js (v18+) and npm installed.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Installation
+```bash
+npm install
+```
 
-## Expanding the ESLint configuration
+### Development Server
+```bash
+npm run dev
+```
+The application will be available at `http://localhost:5173`. Ensure the FastAPI backend is also running concurrently to supply data to the application.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Features
+- **Campaign Dashboard**: View active and closed jobs.
+- **Supplier Tracking**: Monitor real-time status of supplier replies and reminder emails.
+- **Insights View**: Examine data extracted automatically from supplier responses using Google Generative AI.
+- **Responsive Design**: Clean layout powered by Tailwind CSS.

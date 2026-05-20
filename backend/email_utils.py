@@ -7,6 +7,7 @@ Uses Gmail API.
 import os
 import base64
 import logging
+import asyncio
 from typing import List, Optional
 
 try:
@@ -60,7 +61,7 @@ def get_gmail_send_service():
 def get_gmail_read_service():
     return get_gmail_service(['https://www.googleapis.com/auth/gmail.readonly'])
 
-def send_email_with_attachments(
+async def send_email_with_attachments(
     subject: str,
     body: str,
     to_email: str,
@@ -114,7 +115,7 @@ def send_email_with_attachments(
         create_message = {'raw': encoded_message}
 
         logger.info(f"Sending email via Gmail API to {to_email}...")
-        sent_message = service.users().messages().send(userId="me", body=create_message).execute()
+        sent_message = await asyncio.to_thread(lambda: service.users().messages().send(userId="me", body=create_message).execute())
         logger.info(f"Email sent successfully! Message ID: {sent_message['id']}")
         return True
 
@@ -125,7 +126,7 @@ def send_email_with_attachments(
         logger.exception(f"Unexpected error while sending email: {e}")
         return False
 
-def fetch_unread_replies(domains: List[str]) -> List[dict]:
+async def fetch_unread_replies(domains: List[str]) -> List[dict]:
     """
     Fetches unread emails from a list of supplier domains.
     Returns a list of dicts with 'id', 'from', 'subject', 'body', 'date'.
@@ -144,14 +145,14 @@ def fetch_unread_replies(domains: List[str]) -> List[dict]:
     logger.info(f"Querying Gmail: {query}")
     
     try:
-        results = service.users().messages().list(userId='me', q=query, maxResults=50).execute()
+        results = await asyncio.to_thread(lambda: service.users().messages().list(userId='me', q=query, maxResults=50).execute())
         messages = results.get('messages', [])
         
         extracted_emails = []
         
         for message in messages:
             try:
-                msg = service.users().messages().get(userId='me', id=message['id'], format='full').execute()
+                msg = await asyncio.to_thread(lambda mid=message['id']: service.users().messages().get(userId='me', id=mid, format='full').execute())
                 headers = msg['payload']['headers']
                 
                 email_data = {
@@ -201,7 +202,7 @@ def _get_message_body(message: dict) -> str:
         return ""
 
 
-def send_reminder_email(supplier_email: str, supplier_name: str, chemical_query: str) -> bool:
+async def send_reminder_email(supplier_email: str, supplier_name: str, chemical_query: str) -> bool:
     """Sends a reminder email to a supplier who hasn't responded."""
     subject = f"Reminder: Request for Quote - {chemical_query}"
     
@@ -223,10 +224,10 @@ def send_reminder_email(supplier_email: str, supplier_name: str, chemical_query:
     Procurement Team</p>
     """
     
-    return send_email_with_attachments(subject, body, supplier_email)
+    return await send_email_with_attachments(subject, body, supplier_email)
 
 
-def mark_message_as_read(message_id: str) -> bool:
+async def mark_message_as_read(message_id: str) -> bool:
     """Marks a Gmail message as read."""
     if not GOOGLE_API_CLIENT_AVAILABLE:
         logger.error("Google API client libraries not installed.")
@@ -234,11 +235,11 @@ def mark_message_as_read(message_id: str) -> bool:
     
     try:
         service = get_gmail_read_service()
-        service.users().messages().modify(
+        await asyncio.to_thread(lambda: service.users().messages().modify(
             userId='me',
             id=message_id,
             body={'removeLabelIds': ['UNREAD']}
-        ).execute()
+        ).execute())
         logger.info(f"Marked message {message_id} as read")
         return True
     except Exception as e:

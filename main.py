@@ -1,30 +1,37 @@
 import csv
+import asyncio
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 import logging
 import uvicorn
 
-from backend.database import SessionLocal, Job, JobSupplierState, Insight, SupplierEmail, Base, engine
+from backend.database import AsyncSessionLocal, Job, JobSupplierState, Insight, SupplierEmail, Base, engine
 from backend.scheduler import start_scheduler
 from backend.email_utils import send_email_with_attachments, send_reminder_email, fetch_unread_replies
 from backend.extract_insights import extract_insights_from_email, process_supplier_responses
+from backend.notification_service import send_insight_notification
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create tables on startup
-Base.metadata.create_all(bind=engine)
+
+async def init_db():
+    """Initialize database tables on startup."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 # Pydantic models for API
 class StartJobRequest(BaseModel):
     chemical_query: str
     supplier_emails: List[str]
+    user_email: str  # Email for notifications
 
 
 class JobResponse(BaseModel):
@@ -106,9 +113,11 @@ class HealthResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting application...")
+    await init_db()
     start_scheduler()
     yield
     logger.info("Shutting down application...")
+    await engine.dispose()
 
 
 app = FastAPI(title="CRYSTAL SUPPLIER EMAIL SERVICE", lifespan=lifespan)
@@ -122,12 +131,10 @@ app.add_middleware(
 )
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Get async database session."""
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
 # ============================================================================
@@ -171,22 +178,34 @@ def get_suppliers():
 # ============================================================================
 
 @app.get("/api/jobs", response_model=List[JobResponse])
-def get_all_jobs(db: Session = Depends(get_db), limit: int = 50):
+async def get_all_jobs(db: AsyncSession = Depends(get_db), limit: int = 50):
     """Get all jobs with pagination."""
-    jobs = db.query(Job).order_by(Job.created_at.desc()).limit(limit).all()
+    query = select(Job).order_by(Job.created_at.desc()).limit(limit)
+    result = await db.execute(query)
+    jobs = result.scalars().all()
     return jobs
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobDetailResponse)
-def get_job_detail(job_id: int, db: Session = Depends(get_db)):
+async def get_job_detail(job_id: int, db: AsyncSession = Depends(get_db)):
     """Get detailed information about a specific job including suppliers, emails, and insights."""
-    job = db.query(Job).filter(Job.id == job_id).first()
+    query = select(Job).where(Job.id == job_id)
+    result = await db.execute(query)
+    job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    suppliers = db.query(JobSupplierState).filter(JobSupplierState.job_id == job_id).all()
-    insights = db.query(Insight).filter(Insight.job_id == job_id).all()
-    emails = db.query(SupplierEmail).filter(SupplierEmail.job_id == job_id).order_by(SupplierEmail.sent_at.desc()).all()
+    suppliers_query = select(JobSupplierState).where(JobSupplierState.job_id == job_id)
+    suppliers_result = await db.execute(suppliers_query)
+    suppliers = suppliers_result.scalars().all()
+    
+    insights_query = select(Insight).where(Insight.job_id == job_id)
+    insights_result = await db.execute(insights_query)
+    insights = insights_result.scalars().all()
+    
+    emails_query = select(SupplierEmail).where(SupplierEmail.job_id == job_id).order_by(SupplierEmail.sent_at.desc())
+    emails_result = await db.execute(emails_query)
+    emails = emails_result.scalars().all()
     
     return {
         "job": job,
@@ -197,17 +216,17 @@ def get_job_detail(job_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/jobs/start", response_model=dict)
-def start_job(request: StartJobRequest, db: Session = Depends(get_db)):
+async def start_job(request: StartJobRequest, db: AsyncSession = Depends(get_db)):
     """Create and start a new RFQ job."""
     try:
         # Create job in database
         new_job = Job(
             chemical_query=request.chemical_query,
+            user_email=request.user_email,
             status="active"
         )
         db.add(new_job)
-        db.commit()
-        db.refresh(new_job)
+        await db.flush()  # Get the job ID without committing
         
         logger.info(f"Created job {new_job.id} with query: {request.chemical_query}")
         
@@ -223,6 +242,7 @@ def start_job(request: StartJobRequest, db: Session = Depends(get_db)):
                 domain=domain,
             )
             db.add(state)
+            await db.flush()
             
             # Send initial RFQ email
             subject = f"Request for Quote: {request.chemical_query}"
@@ -251,7 +271,7 @@ def start_job(request: StartJobRequest, db: Session = Depends(get_db)):
             Procurement Team</p>
             """
             
-            success = send_email_with_attachments(subject, body, email)
+            success = await send_email_with_attachments(subject, body, email)
             
             if success:
                 sent_count += 1
@@ -268,7 +288,7 @@ def start_job(request: StartJobRequest, db: Session = Depends(get_db)):
             else:
                 logger.warning(f"Failed to send email to {email}")
         
-        db.commit()
+        await db.commit()
         
         return {
             "message": "Job started successfully",
@@ -276,39 +296,46 @@ def start_job(request: StartJobRequest, db: Session = Depends(get_db)):
             "chemical_query": new_job.chemical_query,
             "total_suppliers": len(request.supplier_emails),
             "emails_sent": sent_count,
-            "status": "active"
+            "status": "active",
+            "notification_email": new_job.user_email
         }
         
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.error(f"Error starting job: {e}")
         raise HTTPException(status_code=500, detail=f"Error starting job: {str(e)}")
 
 
 @app.post("/api/jobs/{job_id}/insights/refresh")
-def refresh_insights(job_id: int, db: Session = Depends(get_db)):
+async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
     """Manually trigger insights extraction for a job."""
     try:
-        job = db.query(Job).filter(Job.id == job_id).first()
+        query = select(Job).where(Job.id == job_id)
+        result = await db.execute(query)
+        job = result.scalar_one_or_none()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         
         # Get supplier domains for this job
-        suppliers = db.query(JobSupplierState).filter(JobSupplierState.job_id == job_id).all()
+        suppliers_query = select(JobSupplierState).where(JobSupplierState.job_id == job_id)
+        suppliers_result = await db.execute(suppliers_query)
+        suppliers = suppliers_result.scalars().all()
         domains = list(set([s.domain for s in suppliers]))
         
         logger.info(f"Refreshing insights for job {job_id}, domains: {domains}")
         
         # Process supplier responses
-        insights_list = process_supplier_responses(domains, job_id)
+        insights_list = await process_supplier_responses(domains, job_id)
         
         inserted_count = 0
         for insight_data in insights_list:
             # Check if insight already exists
-            existing = db.query(Insight).filter(
+            existing_query = select(Insight).where(
                 Insight.job_id == job_id,
                 Insight.supplier == insight_data.supplier
-            ).first()
+            )
+            existing_result = await db.execute(existing_query)
+            existing = existing_result.scalar_one_or_none()
             
             if not existing:
                 insight = Insight(
@@ -319,6 +346,7 @@ def refresh_insights(job_id: int, db: Session = Depends(get_db)):
                     quantity=insight_data.quantity,
                     price=insight_data.price,
                     delivery_date=insight_data.delivery_date,
+                    email_body=insight_data.email_body,
                     extracted_at=datetime.utcnow()
                 )
                 db.add(insight)
@@ -326,7 +354,14 @@ def refresh_insights(job_id: int, db: Session = Depends(get_db)):
         
         # Update total responses
         job.total_responses = inserted_count
-        db.commit()
+        await db.commit()
+        
+        # Send notification if there are new insights
+        if inserted_count > 0:
+            new_insights_query = select(Insight).where(Insight.job_id == job_id)
+            new_insights_result = await db.execute(new_insights_query)
+            new_insights = new_insights_result.scalars().all()
+            await send_insight_notification(job, inserted_count, new_insights)
         
         return {
             "message": "Insights refreshed",
@@ -341,29 +376,31 @@ def refresh_insights(job_id: int, db: Session = Depends(get_db)):
                     "price": i.price,
                     "delivery_date": i.delivery_date
                 }
-                for i in db.query(Insight).filter(Insight.job_id == job_id).all()
+                for i in new_insights
             ]
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.error(f"Error refreshing insights: {e}")
         raise HTTPException(status_code=500, detail=f"Error refreshing insights: {str(e)}")
 
 
 @app.post("/api/jobs/{job_id}/close")
-def close_job(job_id: int, db: Session = Depends(get_db)):
+async def close_job(job_id: int, db: AsyncSession = Depends(get_db)):
     """Manually close a job."""
     try:
-        job = db.query(Job).filter(Job.id == job_id).first()
+        query = select(Job).where(Job.id == job_id)
+        result = await db.execute(query)
+        job = result.scalar_one_or_none()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         
         job.status = "closed"
         job.closed_at = datetime.utcnow()
-        db.commit()
+        await db.commit()
         
         logger.info(f"Closed job {job_id}")
         
@@ -377,7 +414,7 @@ def close_job(job_id: int, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.error(f"Error closing job: {e}")
         raise HTTPException(status_code=500, detail=f"Error closing job: {str(e)}")
 
@@ -387,44 +424,56 @@ def close_job(job_id: int, db: Session = Depends(get_db)):
 # ============================================================================
 
 @app.get("/api/jobs/{job_id}/suppliers", response_model=List[SupplierStateResponse])
-def get_job_suppliers(job_id: int, db: Session = Depends(get_db)):
+async def get_job_suppliers(job_id: int, db: AsyncSession = Depends(get_db)):
     """Get all suppliers for a specific job."""
-    job = db.query(Job).filter(Job.id == job_id).first()
+    query = select(Job).where(Job.id == job_id)
+    result = await db.execute(query)
+    job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    suppliers = db.query(JobSupplierState).filter(JobSupplierState.job_id == job_id).all()
+    suppliers_query = select(JobSupplierState).where(JobSupplierState.job_id == job_id)
+    suppliers_result = await db.execute(suppliers_query)
+    suppliers = suppliers_result.scalars().all()
     return suppliers
 
 
 @app.get("/api/suppliers/{supplier_id}/emails", response_model=List[EmailResponse])
-def get_supplier_emails(supplier_id: int, db: Session = Depends(get_db)):
+async def get_supplier_emails(supplier_id: int, db: AsyncSession = Depends(get_db)):
     """Get all emails for a specific supplier state."""
-    supplier = db.query(JobSupplierState).filter(JobSupplierState.id == supplier_id).first()
+    supplier_query = select(JobSupplierState).where(JobSupplierState.id == supplier_id)
+    supplier_result = await db.execute(supplier_query)
+    supplier = supplier_result.scalar_one_or_none()
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier state not found")
     
-    emails = db.query(SupplierEmail).filter(SupplierEmail.supplier_state_id == supplier_id).order_by(SupplierEmail.sent_at.desc()).all()
+    emails_query = select(SupplierEmail).where(SupplierEmail.supplier_state_id == supplier_id).order_by(SupplierEmail.sent_at.desc())
+    emails_result = await db.execute(emails_query)
+    emails = emails_result.scalars().all()
     return emails
 
 
 @app.post("/api/jobs/{job_id}/suppliers/{supplier_id}/send-reminder")
-def send_reminder(job_id: int, supplier_id: int, db: Session = Depends(get_db)):
+async def send_reminder(job_id: int, supplier_id: int, db: AsyncSession = Depends(get_db)):
     """Send a reminder email to a supplier."""
     try:
-        job = db.query(Job).filter(Job.id == job_id).first()
+        job_query = select(Job).where(Job.id == job_id)
+        job_result = await db.execute(job_query)
+        job = job_result.scalar_one_or_none()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         
-        supplier = db.query(JobSupplierState).filter(
+        supplier_query = select(JobSupplierState).where(
             JobSupplierState.id == supplier_id,
             JobSupplierState.job_id == job_id
-        ).first()
+        )
+        supplier_result = await db.execute(supplier_query)
+        supplier = supplier_result.scalar_one_or_none()
         if not supplier:
             raise HTTPException(status_code=404, detail="Supplier not found for this job")
         
         # Send reminder email
-        success = send_reminder_email(
+        success = await send_reminder_email(
             supplier.email_id,
             supplier.company_name,
             job.chemical_query
@@ -443,7 +492,7 @@ def send_reminder(job_id: int, supplier_id: int, db: Session = Depends(get_db)):
                 body="[Reminder email sent]"
             )
             db.add(email_record)
-            db.commit()
+            await db.commit()
             
             return {
                 "message": "Reminder sent successfully",
@@ -456,7 +505,7 @@ def send_reminder(job_id: int, supplier_id: int, db: Session = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.error(f"Error sending reminder: {e}")
         raise HTTPException(status_code=500, detail=f"Error sending reminder: {str(e)}")
 
@@ -466,20 +515,26 @@ def send_reminder(job_id: int, supplier_id: int, db: Session = Depends(get_db)):
 # ============================================================================
 
 @app.get("/api/jobs/{job_id}/insights", response_model=List[InsightResponse])
-def get_job_insights(job_id: int, db: Session = Depends(get_db)):
+async def get_job_insights(job_id: int, db: AsyncSession = Depends(get_db)):
     """Get all insights for a specific job."""
-    job = db.query(Job).filter(Job.id == job_id).first()
+    job_query = select(Job).where(Job.id == job_id)
+    job_result = await db.execute(job_query)
+    job = job_result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    insights = db.query(Insight).filter(Insight.job_id == job_id).order_by(Insight.extracted_at.desc()).all()
+    insights_query = select(Insight).where(Insight.job_id == job_id).order_by(Insight.extracted_at.desc())
+    insights_result = await db.execute(insights_query)
+    insights = insights_result.scalars().all()
     return insights
 
 
 @app.get("/api/insights/by-supplier", response_model=dict)
-def get_insights_by_supplier(db: Session = Depends(get_db)):
+async def get_insights_by_supplier(db: AsyncSession = Depends(get_db)):
     """Get all insights grouped by supplier."""
-    insights = db.query(Insight).all()
+    insights_query = select(Insight)
+    insights_result = await db.execute(insights_query)
+    insights = insights_result.scalars().all()
     
     grouped = {}
     for insight in insights:
@@ -505,16 +560,25 @@ def get_insights_by_supplier(db: Session = Depends(get_db)):
 # ============================================================================
 
 @app.get("/api/stats/summary")
-def get_summary_stats(db: Session = Depends(get_db)):
+async def get_summary_stats(db: AsyncSession = Depends(get_db)):
     """Get overall statistics about jobs and responses."""
-    total_jobs = db.query(Job).count()
-    active_jobs = db.query(Job).filter(Job.status == "active").count()
-    closed_jobs = db.query(Job).filter(Job.status == "closed").count()
+    total_jobs_result = await db.execute(select(Job))
+    total_jobs = len(total_jobs_result.scalars().all())
     
-    total_suppliers = db.query(JobSupplierState).count()
-    responded_suppliers = db.query(JobSupplierState).filter(JobSupplierState.replied == True).count()
+    active_jobs_result = await db.execute(select(Job).where(Job.status == "active"))
+    active_jobs = len(active_jobs_result.scalars().all())
     
-    total_insights = db.query(Insight).count()
+    closed_jobs_result = await db.execute(select(Job).where(Job.status == "closed"))
+    closed_jobs = len(closed_jobs_result.scalars().all())
+    
+    total_suppliers_result = await db.execute(select(JobSupplierState))
+    total_suppliers = len(total_suppliers_result.scalars().all())
+    
+    responded_suppliers_result = await db.execute(select(JobSupplierState).where(JobSupplierState.replied == True))
+    responded_suppliers = len(responded_suppliers_result.scalars().all())
+    
+    total_insights_result = await db.execute(select(Insight))
+    total_insights = len(total_insights_result.scalars().all())
     
     return {
         "jobs": {
@@ -534,18 +598,25 @@ def get_summary_stats(db: Session = Depends(get_db)):
 
 
 @app.get("/api/stats/job/{job_id}")
-def get_job_stats(job_id: int, db: Session = Depends(get_db)):
+async def get_job_stats(job_id: int, db: AsyncSession = Depends(get_db)):
     """Get statistics for a specific job."""
-    job = db.query(Job).filter(Job.id == job_id).first()
+    job_query = select(Job).where(Job.id == job_id)
+    job_result = await db.execute(job_query)
+    job = job_result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    total_suppliers = db.query(JobSupplierState).filter(JobSupplierState.job_id == job_id).count()
-    responded = db.query(JobSupplierState).filter(
+    total_suppliers_result = await db.execute(select(JobSupplierState).where(JobSupplierState.job_id == job_id))
+    total_suppliers = len(total_suppliers_result.scalars().all())
+    
+    responded_result = await db.execute(select(JobSupplierState).where(
         JobSupplierState.job_id == job_id,
         JobSupplierState.replied == True
-    ).count()
-    insights = db.query(Insight).filter(Insight.job_id == job_id).count()
+    ))
+    responded = len(responded_result.scalars().all())
+    
+    insights_result = await db.execute(select(Insight).where(Insight.job_id == job_id))
+    insights = len(insights_result.scalars().all())
     
     return {
         "job_id": job_id,

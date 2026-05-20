@@ -1,15 +1,30 @@
 import os
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Boolean, Text
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./jobs.db")
+# Use asyncpg driver for PostgreSQL async support
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./jobs.db")
 
-engine = create_engine(
+# For async PostgreSQL: postgresql+asyncpg://user:password@host/dbname
+if "postgresql" in DATABASE_URL:
+    # Already expects asyncpg format
+    pass
+elif "sqlite" not in DATABASE_URL:
+    # Convert sync to async if needed
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+
+engine = create_async_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+    echo=False,
+    future=True,
+    pool_pre_ping=True,
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+AsyncSessionLocal = async_sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
 
 Base = declarative_base()
 
@@ -18,11 +33,14 @@ class Job(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     chemical_query = Column(String, index=True)
+    user_email = Column(String)  # Email for notifications
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String, default="active") # active, closed
     reminders_sent = Column(Boolean, default=False)
     closed_at = Column(DateTime, nullable=True)
     total_responses = Column(Integer, default=0)
+    last_summary_sent_at = Column(DateTime, nullable=True)  # For 12-hour summaries
+    closure_notification_sent = Column(Boolean, default=False)  # Track closure report
     
     suppliers = relationship("JobSupplierState", back_populates="job", cascade="all, delete-orphan")
     insights = relationship("Insight", back_populates="job", cascade="all, delete-orphan")
@@ -72,6 +90,7 @@ class Insight(Base):
     quantity = Column(String, nullable=True)
     price = Column(String, nullable=True)
     delivery_date = Column(String, nullable=True)
+    email_body = Column(Text, nullable=True)  # Complete email for drilldowns
     extracted_at = Column(DateTime, default=datetime.utcnow)
     
     job = relationship("Job", back_populates="insights")

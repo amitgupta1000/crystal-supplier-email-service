@@ -2,6 +2,10 @@
 
 A full-stack application that automates the process of sending Requests for Quote (RFQs) to multiple suppliers for chemical products, tracks their responses, and extracts pricing/logistics insights using AI.
 
+> **📚 Looking for detailed documentation?** 
+> We have an extensive collection of guides, API references, and architecture documents. 
+> Start by checking out our **Documentation Index** to find exactly what you need.
+
 ## Overview
 
 Crystal Supplier Email Service is designed to streamline the supplier communication workflow for bulk chemical procurement. It enables users to:

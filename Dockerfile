@@ -1,22 +1,5 @@
-# Multi-stage Dockerfile for Crystal Supplier Email Service
-# Stage 1: Frontend Build
-FROM node:18-alpine AS frontend-builder
-
-WORKDIR /app/frontend
-
-# Copy frontend files
-COPY frontend/package*.json ./
-
-# Install dependencies
-RUN npm ci
-
-# Copy source files
-COPY frontend/ .
-
-# Build frontend
-RUN npm run build
-
-# Stage 2: Python Backend Runtime
+# Dockerfile for Crystal Supplier Email Service Backend
+# Python FastAPI + AsyncPG application
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -37,9 +20,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY main.py .
 COPY .env* ./
-
-# Copy built frontend from frontend builder stage
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Copy static assets
 COPY suppliers.csv message_template.csv reminder_template.csv insights.csv ./
