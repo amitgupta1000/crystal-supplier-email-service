@@ -1,14 +1,15 @@
 import csv
 import asyncio
+import os
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import List, Optional, AsyncGenerator
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import logging
 import uvicorn
 
@@ -24,8 +25,16 @@ logger = logging.getLogger(__name__)
 
 async def init_db():
     """Initialize database tables on startup."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            # Create email_service schema if it doesn't exist
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS email_service;"))
+            # Create all tables from ORM models
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("✅ Database initialized successfully")
+    except Exception as e:
+        logger.warning(f"⚠️  Database initialization failed (will retry on first request): {e}")
+        # Don't fail startup - tables will be created on first request
 
 # Pydantic models for API
 class StartJobRequest(BaseModel):
@@ -35,6 +44,8 @@ class StartJobRequest(BaseModel):
 
 
 class JobResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     chemical_query: str
     created_at: datetime
@@ -43,11 +54,10 @@ class JobResponse(BaseModel):
     closed_at: Optional[datetime] = None
     total_responses: int
 
-    class Config:
-        from_attributes = True
-
 
 class SupplierStateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     company_name: str
     email_id: str
@@ -57,11 +67,10 @@ class SupplierStateResponse(BaseModel):
     reply_received_at: Optional[datetime] = None
     reminder_sent_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
-
 
 class InsightResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     supplier: str
     contact_person: Optional[str] = None
@@ -71,11 +80,10 @@ class InsightResponse(BaseModel):
     delivery_date: Optional[str] = None
     extracted_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class EmailResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     email_type: str
     from_email: str
@@ -84,18 +92,14 @@ class EmailResponse(BaseModel):
     body: str
     sent_at: datetime
 
-    class Config:
-        from_attributes = True
-
 
 class JobDetailResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     job: JobResponse
     suppliers: List[SupplierStateResponse]
     insights: List[InsightResponse]
     emails: List[EmailResponse]
-
-    class Config:
-        from_attributes = True
 
 
 class SupplierResponse(BaseModel):

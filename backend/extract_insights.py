@@ -17,9 +17,14 @@ logger = logging.getLogger(__name__)
 
 # Initialize Generative AI
 if GENAI_AVAILABLE:
-    api_key = os.environ.get("GOOGLE_GENAI_API_KEY")
+    # Try GOOGLE_API_KEY first, then fall back to GOOGLE_GENAI_API_KEY
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
     if api_key:
         genai.configure(api_key=api_key)
+
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+else:
+    logger.warning("google-generativeai library not found. Insight extraction will be disabled.")
 
 
 class InsightData(BaseModel):
@@ -42,12 +47,12 @@ async def extract_insights_from_email(email_subject: str, email_body: str) -> Op
         logger.error("google-generativeai is not installed")
         return None
     
-    if not os.environ.get("GOOGLE_GENAI_API_KEY"):
-        logger.warning("GOOGLE_GENAI_API_KEY not set - cannot extract insights")
+    if not (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")):
+        logger.warning("GOOGLE_API_KEY or GOOGLE_GENAI_API_KEY not set - cannot extract insights")
         return None
     
     try:
-        model = genai.GenerativeModel("gemini-pro")
+        model = model or genai.GenerativeModel("gemini-2.5-flash-lite")
         
         prompt = f"""
         Extract the following information from this supplier email and return as JSON:

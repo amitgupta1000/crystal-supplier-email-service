@@ -1,25 +1,35 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Boolean, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
-# Use asyncpg driver for PostgreSQL async support
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./jobs.db")
+# Cloud SQL PostgreSQL async connection
+# Format: postgresql+asyncpg://user:password@host:port/database
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# For async PostgreSQL: postgresql+asyncpg://user:password@host/dbname
-if "postgresql" in DATABASE_URL:
-    # Already expects asyncpg format
-    pass
-elif "sqlite" not in DATABASE_URL:
-    # Convert sync to async if needed
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+if not DATABASE_URL:
+    # Build from individual environment variables
+    host = os.environ.get("CLOUD_SQL_HOST", "35.200.192.16")
+    port = os.environ.get("CLOUD_SQL_PORT", "5432")
+    user = os.environ.get("CLOUD_SQL_USER", "postgres")
+    password = os.environ.get("CLOUD_SQL_PASSWORD")
+    database = os.environ.get("CLOUD_SQL_DATABASE", "inventory")
+    
+    if not password:
+        raise ValueError("CLOUD_SQL_PASSWORD environment variable is required")
+    
+    DATABASE_URL = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+
+if not DATABASE_URL.startswith("postgresql+asyncpg://"):
+    raise ValueError("DATABASE_URL must use postgresql+asyncpg:// driver for Cloud SQL")
 
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     future=True,
     pool_pre_ping=True,
+    connect_args={"ssl": True, "server_settings": {"application_name": "crystal-email-service"}},
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -30,11 +40,13 @@ Base = declarative_base()
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = {"schema": "email_service"}
     
     id = Column(Integer, primary_key=True, index=True)
     chemical_query = Column(String, index=True)
     user_email = Column(String)  # Email for notifications
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     status = Column(String, default="active") # active, closed
     reminders_sent = Column(Boolean, default=False)
     closed_at = Column(DateTime, nullable=True)
@@ -48,9 +60,10 @@ class Job(Base):
 
 class JobSupplierState(Base):
     __tablename__ = "job_supplier_states"
+    __table_args__ = {"schema": "email_service"}
     
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("jobs.id"), index=True)
+    job_id = Column(Integer, ForeignKey("email_service.jobs.id"), index=True)
     company_name = Column(String)
     email_id = Column(String, index=True)
     domain = Column(String)
@@ -64,10 +77,11 @@ class JobSupplierState(Base):
 
 class SupplierEmail(Base):
     __tablename__ = "supplier_emails"
+    __table_args__ = {"schema": "email_service"}
     
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("jobs.id"), index=True)
-    supplier_state_id = Column(Integer, ForeignKey("job_supplier_states.id"), nullable=True)
+    job_id = Column(Integer, ForeignKey("email_service.jobs.id"), index=True)
+    supplier_state_id = Column(Integer, ForeignKey("email_service.job_supplier_states.id"), nullable=True)
     email_type = Column(String)  # "outbound" or "inbound"
     from_email = Column(String)
     to_email = Column(String)
@@ -81,9 +95,10 @@ class SupplierEmail(Base):
 
 class Insight(Base):
     __tablename__ = "insights"
+    __table_args__ = {"schema": "email_service"}
     
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("jobs.id"), index=True)
+    job_id = Column(Integer, ForeignKey("email_service.jobs.id"), index=True)
     supplier = Column(String, index=True)
     contact_person = Column(String, nullable=True)
     product = Column(String, nullable=True)
