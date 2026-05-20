@@ -1,8 +1,6 @@
 """
-email_utils.py
-
-Utility for sending and reading email notifications.
-Uses Gmail API.
+email_utils.py - Gmail API integration for sending and receiving emails.
+SSL certificates configured in main.py.
 """
 import os
 import base64
@@ -27,47 +25,43 @@ EMAIL_SENDER = os.environ.get("EMAIL_SENDER", GMAIL_IMPERSONATE_USER)
 EMAIL_RECIPIENTS = os.environ.get("EMAIL_RECIPIENTS", "").split(",")
 
 def is_email_configured() -> bool:
-    missing = []
     if not GOOGLE_API_CLIENT_AVAILABLE:
-        missing.append("GOOGLE_API_CLIENT_AVAILABLE (Google API libraries not installed)")
-        
-    if missing:
-        logger.warning(f"Email configuration is incomplete. Missing variables: {', '.join(missing)}")
+        logger.warning("Email configuration incomplete: Google API libraries not installed")
         return False
     return True
 
 def get_gmail_service(scopes: List[str]):
     """
-    Initializes and returns the Gmail API service using Application Default Credentials.
-    Credentials are automatically discovered from gcloud CLI, GCP service account, or environment variables.
+    Initialize Gmail API service using Application Default Credentials.
+    SSL certificates configured in main.py via certifi.
     """
-    # If GOOGLE_APPLICATION_CREDENTIALS is set to a non-existent file, unset it
-    # so that google.auth.default() will use other auth methods
     creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
     if creds_path:
         creds_path = os.path.expanduser(creds_path)
         if not os.path.exists(creds_path):
-            logger.debug(f"GOOGLE_APPLICATION_CREDENTIALS points to non-existent file {creds_path}, unsetting to use other auth methods")
+            logger.debug(f"Removing non-existent GOOGLE_APPLICATION_CREDENTIALS: {creds_path}")
             os.environ.pop('GOOGLE_APPLICATION_CREDENTIALS', None)
     
-    # Use Application Default Credentials (gcloud, environment variables, or GCP service account)
+    # Use Application Default Credentials
     creds, _ = google.auth.default(scopes=scopes)
     
-    # If using a service account (has with_subject method), delegate to the impersonate user
+    # If using service account, delegate to impersonate user
     if hasattr(creds, 'with_subject'):
         delegated_creds = creds.with_subject(GMAIL_IMPERSONATE_USER)
         return build('gmail', 'v1', credentials=delegated_creds, cache_discovery=False)
     else:
-        # Standard OAuth2 credentials
         return build('gmail', 'v1', credentials=creds, cache_discovery=False)
 
+
 def get_gmail_send_service():
-    # Use the full Gmail API scope for sending emails
+    """Gmail service with full scope for sending emails."""
     return get_gmail_service(['https://www.googleapis.com/auth/gmail.modify'])
 
+
 def get_gmail_read_service():
-    # Use the full Gmail API scope for reading emails
+    """Gmail service with full scope for reading emails."""
     return get_gmail_service(['https://www.googleapis.com/auth/gmail.modify'])
+
 
 async def send_email_with_attachments(
     subject: str,
@@ -253,37 +247,3 @@ async def mark_message_as_read(message_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error marking message as read: {e}")
         return False
-        for msg in messages:
-            msg_id = msg['id']
-            msg_data = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
-            
-            headers = msg_data['payload']['headers']
-            sender = next((h['value'] for h in headers if h['name'].lower() == 'from'), "Unknown")
-            subject = next((h['value'] for h in headers if h['name'].lower() == 'subject'), "No Subject")
-            date = next((h['value'] for h in headers if h['name'].lower() == 'date'), "Unknown Date")
-            
-            # Extract body
-            body = ""
-            if 'parts' in msg_data['payload']:
-                for part in msg_data['payload']['parts']:
-                    if part['mimeType'] == 'text/plain' and 'data' in part['body']:
-                        body_data = part['body']['data']
-                        body = base64.urlsafe_b64decode(body_data).decode('utf-8')
-                        break
-            elif 'data' in msg_data['payload']['body']:
-                body_data = msg_data['payload']['body']['data']
-                body = base64.urlsafe_b64decode(body_data).decode('utf-8')
-                
-            extracted_emails.append({
-                'id': msg_id,
-                'from': sender,
-                'subject': subject,
-                'date': date,
-                'body': body
-            })
-            
-        return extracted_emails
-
-    except Exception as e:
-        logger.error(f"Error fetching emails: {e}")
-        return []

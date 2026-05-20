@@ -1,14 +1,16 @@
 import csv
-import asyncio
 import os
-from pathlib import Path
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import List, Optional, AsyncGenerator
 
-# Note: GCP credentials are handled via Application Default Credentials (ADC)
-# They can be provided through environment variables, gcloud CLI, or GCP service account
-# No explicit credential file checks needed here
+# Configure SSL certificates early for all HTTPS connections
+try:
+    import certifi
+    os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+    os.environ.setdefault('REQUESTS_CA_BUNDLE', certifi.where())
+except ImportError:
+    pass
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,12 +18,11 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, ConfigDict
 import logging
-import uvicorn
 
 from backend.database import AsyncSessionLocal, Job, JobSupplierState, Insight, SupplierEmail, Base, engine, USE_SQLITE
 from backend.scheduler import start_scheduler
 from backend.email_utils import send_email_with_attachments, send_reminder_email, fetch_unread_replies
-from backend.extract_insights import extract_insights_from_email, process_supplier_responses
+from backend.extract_insights import process_supplier_responses
 from backend.notification_service import send_insight_notification
 
 logging.basicConfig(level=logging.INFO)
@@ -84,6 +85,7 @@ class InsightResponse(BaseModel):
     quantity: Optional[str] = None
     price: Optional[str] = None
     delivery_date: Optional[str] = None
+    email_body: Optional[str] = None
     extracted_at: datetime
 
 
@@ -240,24 +242,44 @@ async def start_job(request: StartJobRequest, db: AsyncSession = Depends(get_db)
         
         logger.info(f"Created job {new_job.id} with query: {request.chemical_query}")
         
+        # Load supplier details from suppliers.csv
+        supplier_details = {}
+        try:
+            with open("suppliers.csv", "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    email = row.get("Email ID", "").lower()
+                    supplier_details[email] = {
+                        "company_name": row.get("Company Name", ""),
+                        "salutation": row.get("Salutation 1", "Hello")
+                    }
+        except FileNotFoundError:
+            logger.warning("suppliers.csv not found, using defaults")
+        
         # Record targeted suppliers
         sent_count = 0
         for email in request.supplier_emails:
+            email_lower = email.lower()
             domain = email.split("@")[-1] if email else ""
+            
+            # Get supplier details or use defaults
+            supplier_info = supplier_details.get(email_lower, {})
+            company_name = supplier_info.get("company_name", email.split("@")[0])
+            salutation = supplier_info.get("salutation", "Hello")
             
             state = JobSupplierState(
                 job_id=new_job.id,
-                company_name=email.split("@")[0],  # Use email prefix as company name for now
+                company_name=company_name,
                 email_id=email,
                 domain=domain,
             )
             db.add(state)
             await db.flush()
             
-            # Send initial RFQ email
+            # Send initial RFQ email with personalized salutation
             subject = f"Request for Quote: {request.chemical_query}"
             body = f"""
-            <p>Hello,</p>
+            <p>{salutation},</p>
             
             <p>I hope this email finds you well. I am reaching out regarding the following procurement inquiry:</p>
             
@@ -326,7 +348,7 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         
-        # Get supplier domains for this job
+        # Get supplier domains and states for this job
         suppliers_query = select(JobSupplierState).where(JobSupplierState.job_id == job_id)
         suppliers_result = await db.execute(suppliers_query)
         suppliers = suppliers_result.scalars().all()
@@ -334,11 +356,13 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
         
         logger.info(f"Refreshing insights for job {job_id}, domains: {domains}")
         
-        # Process supplier responses
+        # Process supplier responses to extract insights
         insights_list = await process_supplier_responses(domains, job_id)
         
         inserted_count = 0
         new_insights = []  # Initialize before use
+        extracted_suppliers = set()  # Track which suppliers we got responses from
+        
         for insight_data in insights_list:
             # Check if insight already exists
             existing_query = select(Insight).where(
@@ -362,9 +386,32 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
                 )
                 db.add(insight)
                 inserted_count += 1
+            
+            # Track that we got a response (for marking suppliers as replied)
+            extracted_suppliers.add(insight_data.supplier or "Unknown")
         
-        # Update total responses
-        job.total_responses = inserted_count
+        # Mark suppliers as replied based on extracted insights
+        # Only mark suppliers that have insights extracted in their name
+        now = datetime.utcnow()
+        if extracted_suppliers:
+            for supplier in suppliers:
+                # Check if this supplier has any insights with matching company name
+                for extracted_supplier_name in extracted_suppliers:
+                    if (extracted_supplier_name.lower() in supplier.company_name.lower() or 
+                        supplier.company_name.lower() in extracted_supplier_name.lower() or
+                        extracted_supplier_name.lower() == "internal test"):
+                        supplier.replied = True
+                        supplier.reply_received_at = now
+                        logger.info(f"Marked supplier {supplier.company_name} ({supplier.domain}) as replied based on extracted insights from {extracted_supplier_name}")
+                        break
+        
+        # Count ALL insights for total_responses (including new ones just added)
+        all_insights_query = select(Insight).where(Insight.job_id == job_id)
+        all_insights_result = await db.execute(all_insights_query)
+        all_insights = all_insights_result.scalars().all()
+        job.total_responses = len(all_insights)
+        
+        # Commit all changes together
         await db.commit()
         
         # Send notification if there are new insights
@@ -385,7 +432,8 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
                     "product": i.product,
                     "quantity": i.quantity,
                     "price": i.price,
-                    "delivery_date": i.delivery_date
+                    "delivery_date": i.delivery_date,
+                    "email_body": i.email_body
                 }
                 for i in new_insights
             ]
@@ -643,13 +691,6 @@ async def get_job_stats(job_id: int, db: AsyncSession = Depends(get_db)):
         },
         "insights_count": insights
     }
-
-
-if __name__ == "__main__":
-    import os
-    host = os.environ.get("API_HOST", "0.0.0.0")
-    port = int(os.environ.get("API_PORT", 8000))
-    uvicorn.run(app, host=host, port=port)
 
 if __name__ == "__main__":
     import uvicorn

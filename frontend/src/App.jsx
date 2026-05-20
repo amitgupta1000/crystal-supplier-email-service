@@ -3,7 +3,7 @@ import {
   Activity, Send, Archive, RefreshCw, CheckCircle2, 
   AlertCircle, Clock, Users, DollarSign, Award, 
   FileText, ChevronRight, Search, PlusCircle, Check,
-  Sparkles, Mail, Database, Ban, Inbox, ArrowRight
+  Sparkles, Mail, Database, Ban, Inbox, ArrowRight, Eye, X
 } from 'lucide-react';
 
 function App() {
@@ -12,7 +12,10 @@ function App() {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState(null);
+  const [selectedJobDetail, setSelectedJobDetail] = useState(null);
   const [toast, setToast] = useState(null);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [selectedEmail, setSelectedEmail] = useState(null);
   
   // States for Launchpad (Column 1)
   const [query, setQuery] = useState('');
@@ -73,6 +76,24 @@ function App() {
     fetchSuppliers();
   }, []);
 
+  // Fetch detailed job info when selectedJobId changes
+  useEffect(() => {
+    if (selectedJobId) {
+      const fetchJobDetail = async () => {
+        try {
+          const res = await fetch(`http://localhost:8000/api/jobs/${selectedJobId}`);
+          if (res.ok) {
+            const data = await res.json();
+            setSelectedJobDetail(data);
+          }
+        } catch (e) {
+          console.error('Failed to fetch job details:', e);
+        }
+      };
+      fetchJobDetail();
+    }
+  }, [selectedJobId]);
+
   // Compute stats
   const activeCampaignsCount = jobs.filter(j => j.status === 'active').length;
   
@@ -98,9 +119,9 @@ function App() {
   });
   const avgPrice = prices.length > 0 
     ? `$${(prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(1)} / MT` 
-    : '$647.5 / MT';
+    : 'N/A';
 
-  const selectedJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
+  const selectedJob = selectedJobDetail?.job || jobs.find(j => j.id === selectedJobId);
 
   // Actions
   const handleToggleSupplier = (email) => {
@@ -380,16 +401,101 @@ function App() {
             ========================================== */}
         <section className="flex flex-col h-full bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm min-h-0 overflow-hidden">
           {/* Header */}
-          <div className="shrink-0 mb-3 border-b border-slate-100 pb-2">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
-              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">2. Campaign Registry</h2>
+          <div className="shrink-0 mb-3 border-b border-slate-100 pb-2 flex justify-between items-start">
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">2. Campaign Monitor & Status</h2>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-0.5">Select a campaign to view status updates and manage outreach.</p>
             </div>
-            <p className="text-[10px] text-slate-500 mt-0.5">Select a campaign and monitor its automated outreach pipeline.</p>
+            {selectedJob && (
+              <button
+                onClick={fetchJobs}
+                disabled={loadingJobs}
+                className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-700 transition-colors disabled:opacity-50 shrink-0"
+                title="Refresh campaign data"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingJobs ? 'animate-spin' : ''}`} />
+              </button>
+            )}
           </div>
 
           <div className="flex-1 flex flex-col justify-between min-h-0 space-y-4">
             
+            {/* Job Status Report Card */}
+            {selectedJob ? (
+              <div className="shrink-0 bg-gradient-to-br from-cyan-50/60 to-blue-50/40 border border-cyan-100 p-3 rounded-xl space-y-2.5">
+                <div className="grid grid-cols-2 gap-2.5">
+                  {/* Campaign Duration */}
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="block text-[8px] font-bold text-slate-400 uppercase">Duration</span>
+                      <span className="block text-[10px] font-bold text-slate-700">{
+                        (() => {
+                          const created = new Date(selectedJobDetail?.job?.created_at);
+                          const now = new Date();
+                          const hours = Math.floor((now - created) / (1000 * 60 * 60));
+                          const mins = Math.floor(((now - created) % (1000 * 60 * 60)) / (1000 * 60));
+                          return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                        })()
+                      }</span>
+                    </div>
+                  </div>
+
+                  {/* Response Rate */}
+                  <div className="flex items-center gap-2">
+                    <Users className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="block text-[8px] font-bold text-slate-400 uppercase">Responses</span>
+                      <span className="block text-[10px] font-bold text-slate-700">{
+                        selectedJobDetail?.suppliers?.filter(s => s.replied).length || 0
+                      } / {selectedJobDetail?.suppliers?.length || 0}</span>
+                    </div>
+                  </div>
+
+                  {/* Insights Count */}
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="block text-[8px] font-bold text-slate-400 uppercase">Insights</span>
+                      <span className="block text-[10px] font-bold text-slate-700">{selectedJobDetail?.insights?.length || 0} Extracted</span>
+                    </div>
+                  </div>
+
+                  {/* Status Badge */}
+                  <div className="flex items-center gap-2">
+                    {selectedJobDetail?.job?.status === 'active' ? (
+                      <>
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></div>
+                        <span className="text-[10px] font-bold text-emerald-700">ACTIVE</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="text-[10px] font-bold text-slate-500">CLOSED</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Timestamps */}
+                <div className="pt-2 border-t border-cyan-100 space-y-1.5 text-[8px]">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-semibold">Created:</span>
+                    <span className="text-slate-700 font-bold">{new Date(selectedJobDetail?.job?.created_at).toLocaleString()}</span>
+                  </div>
+                  {selectedJobDetail?.job?.closed_at && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-semibold">Closed:</span>
+                      <span className="text-slate-700 font-bold">{new Date(selectedJobDetail?.job?.closed_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
             {/* Scrollable list of campaigns in registry */}
             <div className="shrink-0 space-y-2">
               <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active & Archived Registry</span>
@@ -433,28 +539,28 @@ function App() {
                       <div 
                         className="h-full bg-gradient-to-r from-cyan-400 to-purple-400 transition-all duration-300"
                         style={{ 
-                          width: selectedJob.status === 'closed' ? '100%' : selectedJob.reminders_sent ? '66%' : '33%' 
+                        width: selectedJobDetail?.job?.status === 'closed' ? '100%' : selectedJobDetail?.job?.reminders_sent ? '66%' : '33%' 
                         }}
                       />
                     </div>
 
                     <div className="z-10 text-center space-y-0.5">
-                      <div className={`w-4 h-4 rounded-full flex items-center justify-center mx-auto text-[8px] font-bold ${selectedJob.status ? 'bg-cyan-500 border border-cyan-400 text-white' : 'bg-slate-100 text-slate-450 border border-slate-200'}`}>1</div>
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center mx-auto text-[8px] font-bold ${selectedJobDetail?.job?.status ? 'bg-cyan-500 border border-cyan-400 text-white' : 'bg-slate-100 text-slate-450 border border-slate-200'}`}>1</div>
                       <span className="block text-[8px] font-bold text-slate-600 leading-none">Sent</span>
                     </div>
 
                     <div className="z-10 text-center space-y-0.5">
-                      <div className={`w-4 h-4 rounded-full flex items-center justify-center mx-auto text-[8px] font-bold ${selectedJob.status === 'active' && !selectedJob.reminders_sent ? 'bg-cyan-500 border border-cyan-400 text-white animate-pulse' : selectedJob.reminders_sent || selectedJob.status === 'closed' ? 'bg-cyan-500 border border-cyan-400 text-white' : 'bg-slate-100 text-slate-450 border border-slate-200'}`}>2</div>
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center mx-auto text-[8px] font-bold ${selectedJobDetail?.job?.status === 'active' && !selectedJobDetail?.job?.reminders_sent ? 'bg-cyan-500 border border-cyan-400 text-white animate-pulse' : selectedJobDetail?.job?.reminders_sent || selectedJobDetail?.job?.status === 'closed' ? 'bg-cyan-500 border border-cyan-400 text-white' : 'bg-slate-100 text-slate-450 border border-slate-200'}`}>2</div>
                       <span className="block text-[8px] font-bold text-slate-600 leading-none">Polling</span>
                     </div>
 
                     <div className="z-10 text-center space-y-0.5">
-                      <div className={`w-4 h-4 rounded-full flex items-center justify-center mx-auto text-[8px] font-bold ${selectedJob.reminders_sent && selectedJob.status === 'active' ? 'bg-cyan-500 border border-cyan-400 text-white animate-pulse' : selectedJob.status === 'closed' ? 'bg-cyan-500 border border-cyan-400 text-white' : 'bg-slate-100 text-slate-450 border border-slate-200'}`}>3</div>
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center mx-auto text-[8px] font-bold ${selectedJobDetail?.job?.reminders_sent && selectedJobDetail?.job?.status === 'active' ? 'bg-cyan-500 border border-cyan-400 text-white animate-pulse' : selectedJobDetail?.job?.status === 'closed' ? 'bg-cyan-500 border border-cyan-400 text-white' : 'bg-slate-100 text-slate-450 border border-slate-200'}`}>3</div>
                       <span className="block text-[8px] font-bold text-slate-600 leading-none">Reminder</span>
                     </div>
 
                     <div className="z-10 text-center space-y-0.5">
-                      <div className={`w-4 h-4 rounded-full flex items-center justify-center mx-auto text-[8px] font-bold ${selectedJob.status === 'closed' ? 'bg-purple-600 border border-purple-400 text-white' : 'bg-slate-100 text-slate-450 border border-slate-200'}`}>4</div>
+                      <div className={`w-4 h-4 rounded-full flex items-center justify-center mx-auto text-[8px] font-bold ${selectedJobDetail?.job?.status === 'closed' ? 'bg-purple-600 border border-purple-400 text-white' : 'bg-slate-100 text-slate-450 border border-slate-200'}`}>4</div>
                       <span className="block text-[8px] font-bold text-slate-600 leading-none">Archived</span>
                     </div>
                   </div>
@@ -510,61 +616,104 @@ function App() {
             ========================================== */}
         <section className="flex flex-col h-full bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm min-h-0 overflow-hidden">
           {/* Header */}
-          <div className="shrink-0 mb-3 border-b border-slate-100 pb-2">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">3. AI negotiation Insights</h2>
+          <div className="shrink-0 mb-3 border-b border-slate-100 pb-2 flex justify-between items-start">
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">3. Extracted Bids & Offers</h2>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-0.5">AI-extracted terms and pricing from supplier replies.</p>
             </div>
-            <p className="text-[10px] text-slate-500 mt-0.5">Gemini-extracted terms and bids received from supplier replies.</p>
+            {selectedJob && (
+              <button
+                onClick={handleScanInbox}
+                disabled={refreshing}
+                className="p-1.5 rounded-lg border border-cyan-200 bg-cyan-50 hover:bg-cyan-100 text-cyan-600 transition-colors disabled:opacity-50 shrink-0"
+                title="Refresh insights from inbox"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              </button>
+            )}
           </div>
 
           <div className="flex-1 flex flex-col justify-between min-h-0 space-y-4">
             
             {/* Main Extracted Offers Table Container */}
             <div className="flex-1 flex flex-col min-h-0 space-y-2">
-              <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest shrink-0">Extracted Bid details</span>
+              <div className="flex justify-between items-center shrink-0">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  Bid Details {selectedJobDetail?.insights?.length > 0 && `(${selectedJobDetail?.insights?.length})`}
+                </span>
+                {selectedJob?.insights?.length > 0 && (
+                  <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                    Updated: {new Date().toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
               
               <div className="flex-1 overflow-hidden border border-slate-100 rounded-xl bg-slate-50/20 flex flex-col">
-                {selectedJob && selectedJob.insights?.length > 0 ? (
+                {selectedJobDetail && selectedJobDetail.insights?.length > 0 ? (
                   <div className="flex-1 overflow-y-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
-                        <tr className="border-b border-slate-150 text-[9px] font-bold text-slate-400 uppercase bg-slate-50 shrink-0">
-                          <th className="p-2.5">Supplier</th>
-                          <th className="p-2.5">Product</th>
+                        <tr className="border-b border-slate-150 text-[8px] font-bold text-slate-400 uppercase bg-slate-50 shrink-0 sticky top-0">
+                          <th className="p-2.5 text-left">Supplier</th>
+                          <th className="p-2.5 text-left">Contact</th>
+                          <th className="p-2.5 text-left">Product</th>
                           <th className="p-2.5 text-right">Price Offer</th>
-                          <th className="p-2.5">Delivery</th>
+                          <th className="p-2.5 text-left">Qty</th>
+                          <th className="p-2.5 text-left">Delivery</th>
+                          <th className="p-2.5 text-center w-10">Email</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 text-[10px]">
-                        {selectedJob.insights.map((ins, idx) => (
-                          <tr key={idx} className="hover:bg-slate-100/40 transition-colors bg-white font-medium text-slate-700">
+                      <tbody className="divide-y divide-slate-100 text-[9px]">
+                        {selectedJobDetail?.insights?.map((ins, idx) => (
+                          <tr key={idx} className="hover:bg-emerald-50/40 transition-colors bg-white font-medium text-slate-700">
                             <td className="p-2.5">
-                              <span className="font-bold text-slate-900 block">{ins.supplier}</span>
-                              <span className="text-[8px] font-bold text-slate-450 block">{ins.contact_person}</span>
+                              <span className="font-bold text-slate-900 block truncate">{ins.supplier}</span>
                             </td>
-                            <td className="p-2.5 truncate max-w-[80px]">
-                              <span>{ins.product}</span>
+                            <td className="p-2.5">
+                              <span className="text-[8px] font-semibold text-slate-600 block truncate">{ins.contact_person || 'N/A'}</span>
+                            </td>
+                            <td className="p-2.5">
+                              <span className="block truncate text-slate-700">{ins.product}</span>
                               <span className="text-[8px] text-slate-500 block truncate">{ins.quantity}</span>
                             </td>
                             <td className="p-2.5 text-right">
-                              <span className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-250 text-emerald-700 font-extrabold text-[9px] block text-center">
-                                {ins.price.split(' ')[0]} {ins.price.split(' ')[1] || 'USD'}
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-250 text-emerald-700 font-extrabold text-[8px] block text-right">
+                                {ins.price}
                               </span>
                             </td>
-                            <td className="p-2.5 text-[9px] text-slate-500 truncate max-w-[85px]">{ins.delivery_date}</td>
+                            <td className="p-2.5 text-[8px] text-slate-500">{ins.quantity}</td>
+                            <td className="p-2.5 text-[8px] text-slate-500 truncate">{ins.delivery_date || 'TBD'}</td>
+                            <td className="p-2.5 text-center">
+                              {ins.email_body && (
+                                <button
+                                  onClick={() => {
+                                    setSelectedEmail(ins);
+                                    setShowEmailModal(true);
+                                  }}
+                                  className="inline-flex items-center justify-center p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
+                                  title="View full email"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
                 ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-2">
-                    <Database className="w-8 h-8 text-slate-350" />
-                    <p className="text-xs font-bold text-slate-450">No Negotiated Offers Extracted</p>
-                    <p className="text-[10px] text-slate-500 max-w-[200px] leading-normal">
-                      Click <strong className="text-cyan-600">Scan Inbox Replies</strong> underneath to poll the mailbox and load parsed offers dynamically!
-                    </p>
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-3">
+                    <Database className="w-8 h-8 text-slate-300" />
+                    <div>
+                      <p className="text-xs font-bold text-slate-500">No Offers Extracted Yet</p>
+                      <p className="text-[9px] text-slate-400 mt-1 max-w-[180px] leading-relaxed">
+                        Supplier replies are being monitored. Click <strong>Refresh</strong> to scan for new responses and extract pricing terms.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -576,19 +725,19 @@ function App() {
                 <button 
                   onClick={handleScanInbox}
                   disabled={refreshing}
-                  className="flex-1 py-2 bg-cyan-600 hover:bg-cyan-750 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md shadow-cyan-600/10 cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+                  className="flex-1 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md shadow-cyan-600/10 cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-                  {refreshing ? 'Scanning...' : 'Scan Inbox'}
+                  {refreshing ? 'Scanning...' : 'Refresh Insights'}
                 </button>
 
-                {selectedJob.status === 'active' && (
+                {selectedJobDetail?.job?.status === 'active' && (
                   <button 
                     onClick={handleCloseCampaign}
-                    className="flex-1 py-2 bg-white border border-rose-250 hover:bg-rose-50 text-rose-600 rounded-xl font-bold text-xs shadow-sm cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+                    className="flex-1 py-2 bg-white border border-rose-250 hover:bg-rose-50 text-rose-600 rounded-xl font-bold text-xs shadow-sm cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all"
                   >
                     <Ban className="w-3.5 h-3.5" />
-                    Archive Bids
+                    Close & Archive
                   </button>
                 )}
               </div>
@@ -613,6 +762,88 @@ function App() {
           <span className="font-mono text-slate-450 truncate max-w-[280px]">GCS: gs://crystal-supplier-email-data/</span>
         </div>
       </footer>
+
+      {/* Email Modal */}
+      {showEmailModal && selectedEmail && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="shrink-0 border-b border-slate-200 px-6 py-4 flex justify-between items-start">
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-slate-900">Source Email</h3>
+                <p className="text-sm text-slate-600 mt-1">
+                  <span className="font-semibold">{selectedEmail.supplier}</span>
+                  {selectedEmail.contact_person && ` - ${selectedEmail.contact_person}`}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowEmailModal(false);
+                  setSelectedEmail(null);
+                }}
+                className="p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-500 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {/* Extracted Data Summary */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-2">
+                <h4 className="font-semibold text-sm text-emerald-900">Extracted Information</h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  {selectedEmail.product && (
+                    <div>
+                      <span className="text-slate-600 font-medium">Product:</span>
+                      <p className="text-slate-800">{selectedEmail.product}</p>
+                    </div>
+                  )}
+                  {selectedEmail.quantity && (
+                    <div>
+                      <span className="text-slate-600 font-medium">Quantity:</span>
+                      <p className="text-slate-800">{selectedEmail.quantity}</p>
+                    </div>
+                  )}
+                  {selectedEmail.price && (
+                    <div>
+                      <span className="text-slate-600 font-medium">Price:</span>
+                      <p className="text-emerald-700 font-bold">{selectedEmail.price}</p>
+                    </div>
+                  )}
+                  {selectedEmail.delivery_date && (
+                    <div>
+                      <span className="text-slate-600 font-medium">Delivery:</span>
+                      <p className="text-slate-800">{selectedEmail.delivery_date}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Full Email */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                <h4 className="font-semibold text-sm text-slate-900 mb-3">Full Email Message</h4>
+                <div className="bg-white border border-slate-200 rounded p-3 text-sm whitespace-pre-wrap text-slate-700 leading-relaxed max-h-96 overflow-y-auto font-mono text-[12px]">
+                  {selectedEmail.email_body}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="shrink-0 border-t border-slate-200 px-6 py-3 flex justify-end">
+              <button
+                onClick={() => {
+                  setShowEmailModal(false);
+                  setSelectedEmail(null);
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

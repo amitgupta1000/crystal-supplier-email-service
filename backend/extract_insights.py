@@ -36,55 +36,30 @@ class InsightData(BaseModel):
     quantity: Optional[str] = None
     price: Optional[str] = None
     delivery_date: Optional[str] = None
+    key_terms: Optional[str] = None
     email_body: Optional[str] = None  # Complete email for drilldowns
 
 
 async def extract_insights_from_email(email_subject: str, email_body: str) -> Optional[InsightData]:
-    """
-    Uses Google Generative AI to extract structured insights from an email.
-    Returns an InsightData object or None if extraction fails.
-    """
+    """Extract structured insights from supplier email using Generative AI."""
     if not GENAI_AVAILABLE or not genai_client:
-        logger.error("google.genai is not available or not configured")
+        logger.error("google.genai not available or not configured")
         return None
     
     try:
-        
-        prompt = f"""
-        Extract the following information from this supplier email and return as JSON:
-        - supplier: Company name
-        - contact_person: Name of the person replying
-        - product: Product name or description
-        - quantity: Quantity offered (include units like MT, tons, barrels, etc.)
-        - price: Price quoted (include currency and unit like $/MT, USD/ton, etc.)
-        - delivery_date: Delivery or shipping date (can be specific date or timeframe like "2 weeks", "Q3 2026", etc.)
-        
-        EXAMPLES OF TYPICAL SUPPLIER RESPONSES:
-        
-        Example 1 (Formal Quote):
-        "Dear Sir, Thank you for your inquiry. We can supply 20,000 MT of Methanol Grade A at $450/MT CFR Singapore. 
-        Our quality manager John Smith will handle this order. Delivery available for June 28, 2026. Best regards, 
-        BASF Chemical Trading"
-        Expected JSON: {{"supplier": "BASF Chemical Trading", "contact_person": "John Smith", "product": "Methanol Grade A", 
-        "quantity": "20,000 MT", "price": "$450/MT CFR Singapore", "delivery_date": "June 28, 2026"}}
-        
-        Example 2 (Informal Response):
-        "Hi, we have stock of Methanol available. Price is 425 USD per ton, FOB Rotterdam. Raj Patel from our sales team 
-        will send the full quote. We can deliver within 3 weeks. Thanks, Petronas Chemical"
-        Expected JSON: {{"supplier": "Petronas Chemical", "contact_person": "Raj Patel", "product": "Methanol", 
-        "quantity": null, "price": "425 USD per ton FOB Rotterdam", "delivery_date": "3 weeks"}}
-        
-        Example 3 (Partial Response):
-        "Hi there! We're interested in discussing this opportunity. Our procurement manager Sarah Johnson would like 
-        to connect with your team. Let's set up a call next week to discuss pricing and availability."
-        Expected JSON: {{"supplier": "Unknown", "contact_person": "Sarah Johnson", "product": null, 
-        "quantity": null, "price": null, "delivery_date": "next week"}}
-        
-        Email Subject: {email_subject}
-        Email Body: {email_body}
-        
-        Return ONLY valid JSON, no other text. If a field is not mentioned or cannot be clearly extracted, set it to null.
-        """
+        prompt = f"""Extract supplier quote data from this email. Return valid JSON only:
+- supplier: Company name (required, infer if needed; use "Internal Test" for self-replies)
+- contact_person: Contact name if identifiable
+- product: Product description
+- quantity: Quantity with units (MT, tons, etc.)
+- price: Price with currency and unit
+- key_terms: Any other relevant terms (payment, delivery, etc.)
+- delivery_date: Delivery timeframe or date
+
+Rules: Always include supplier name. Use null for empty fields. Return ONLY JSON.
+
+Subject: {email_subject}
+Body: {email_body}"""
         
         response = await asyncio.to_thread(
             lambda: genai_client.models.generate_content(
@@ -95,9 +70,8 @@ async def extract_insights_from_email(email_subject: str, email_body: str) -> Op
         
         if response.text:
             try:
-                # Parse the JSON response
                 json_str = response.text.strip()
-                # Handle case where response might have markdown code blocks
+                # Handle markdown code blocks
                 if json_str.startswith("```"):
                     json_str = json_str.split("```")[1]
                     if json_str.startswith("json"):
@@ -108,6 +82,7 @@ async def extract_insights_from_email(email_subject: str, email_body: str) -> Op
                 data['email_body'] = email_body
                 insight = InsightData(**data)
                 logger.info(f"Successfully extracted insights from email")
+                logger.debug(f"Extracted data: supplier={insight.supplier}, contact={insight.contact_person}, product={insight.product}, price={insight.price}")
                 return insight
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse AI response as JSON: {e}")

@@ -7,15 +7,13 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Determine which database to use
+# SSL certificates configured in main.py - reuse environment variables
 USE_SQLITE = os.environ.get("USE_SQLITE", "false").lower() == "true"
 
 if USE_SQLITE:
-    # Local SQLite for testing
     DATABASE_URL = "sqlite+aiosqlite:///./jobs.db"
     logger.info("📊 Using SQLite database: ./jobs.db")
 else:
-    # Cloud SQL PostgreSQL
     password = os.environ.get("CLOUD_SQL_PASSWORD")
     if not password:
         raise ValueError("CLOUD_SQL_PASSWORD environment variable is required")
@@ -25,25 +23,36 @@ else:
     user = os.environ.get("CLOUD_SQL_USER", "postgres")
     database = os.environ.get("CLOUD_SQL_DATABASE", "inventory")
     
-    # Build connection URL
     DATABASE_URL = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
     logger.info(f"📊 Using Cloud SQL: postgresql+asyncpg://{user}:***@{host}:{port}/{database}")
 
-# Create async engine
+# Main engine for API requests
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     future=True,
-    pool_pre_ping=not USE_SQLITE,  # Only use pool_pre_ping for PostgreSQL
-    **({"connect_args": {"ssl": True, "server_settings": {"application_name": "crystal-email-service"}}} if not USE_SQLITE else {}),
+    pool_pre_ping=not USE_SQLITE,
+    **({"connect_args": {"ssl": "prefer", "server_settings": {"application_name": "crystal-email-service"}}} if not USE_SQLITE else {}),
 )
 
-# Create async session factory
 AsyncSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
 
-# ORM Base
+# Scheduler engine: runs in background thread with separate event loop
+scheduler_engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_pre_ping=False,  # Prevent connection issues across event loops
+    poolclass=None,
+    **({"connect_args": {"ssl": "prefer", "server_settings": {"application_name": "crystal-email-service-scheduler"}}} if not USE_SQLITE else {}),
+)
+
+SchedulerAsyncSessionLocal = async_sessionmaker(
+    scheduler_engine, class_=AsyncSession, expire_on_commit=False
+)
+
 Base = declarative_base()
 
 logger.info("✅ Database initialized")
