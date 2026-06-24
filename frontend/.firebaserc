@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "gen-lang-client-0665888431"
+  },
+  "targets": {
+    "gen-lang-client-0665888431": {
+      "hosting": {
+        "frontend": [
+          "crystal-supplier-email-ui-0624"
+        ]
+      }
+    }
+  }
+}

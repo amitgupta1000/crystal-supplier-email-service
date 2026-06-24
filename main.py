@@ -141,10 +141,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CRYSTAL SUPPLIER EMAIL SERVICE", lifespan=lifespan)
 
+
+def get_allowed_origins() -> List[str]:
+    """Parse CORS origins from ALLOWED_ORIGINS env var."""
+    raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+    origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    if origins:
+        return origins
+    # Local-safe defaults for development.
+    return [
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ]
+
+
+allowed_origins = get_allowed_origins()
+logger.info(f"CORS allowed origins: {allowed_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
