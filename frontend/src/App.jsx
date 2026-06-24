@@ -211,6 +211,24 @@ function App() {
     s.domain?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const responseEmails = (selectedJobDetail?.emails || [])
+    .filter((email) => email.email_type === 'inbound')
+    .sort((a, b) => new Date(b.sent_at) - new Date(a.sent_at));
+
+  const getSenderName = (fromEmail = '') => {
+    const match = fromEmail.match(/^(.*)<.*>$/);
+    if (match?.[1]) return match[1].trim().replace(/(^"|"$)/g, '');
+    return fromEmail.split('@')[0] || 'Supplier';
+  };
+
+  const getBodyPreview = (body = '') => {
+    const cleanBody = body
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return cleanBody.length > 140 ? `${cleanBody.slice(0, 140)}...` : cleanBody;
+  };
+
   return (
     <div className="h-screen w-screen flex flex-col justify-between bg-slate-50 select-none overflow-hidden relative text-slate-800">
       
@@ -572,35 +590,42 @@ function App() {
 
                 {/* Target checklist list */}
                 <div className="flex-1 flex flex-col min-h-0 space-y-2">
-                  <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">Supplier Response Status</span>
+                  <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                    Supplier Response Status {responseEmails.length > 0 && `(${responseEmails.length})`}
+                  </span>
                   
                   <div className="flex-1 overflow-y-auto border border-slate-100 rounded-xl p-2 space-y-1.5 bg-slate-50/50">
-                    {selectedJob.suppliers?.map((sup, idx) => (
-                      <div 
-                        key={idx}
-                        className={`p-2 rounded-lg border bg-white border-slate-100 flex justify-between items-center text-xs font-semibold`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <span className="font-bold text-[10px] text-slate-800 block truncate">{sup.company_name || sup.email_id.split('@')[0]}</span>
-                          <span className="text-[8px] text-slate-500 font-medium block truncate mt-0.5">{sup.email_id}</span>
-                        </div>
-
-                        {sup.replied ? (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-[9px] shrink-0 ml-2">
-                            Replied
-                          </span>
-                        ) : selectedJob.reminders_sent ? (
-                          <span className="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 font-bold text-[9px] shrink-0 ml-2 animate-pulse">
-                            Reminder Sent
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-bold text-[9px] shrink-0 ml-2 flex items-center gap-1">
-                            <Clock className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '4s' }} />
-                            Awaiting
-                          </span>
-                        )}
+                    {responseEmails.length > 0 ? (
+                      responseEmails.map((email, idx) => {
+                        const senderName = getSenderName(email.from_email || '');
+                        const senderEmail = (email.from_email || '').match(/<([^>]+)>/)?.[1] || email.from_email;
+                        return (
+                          <div
+                            key={`${email.id || idx}-${email.sent_at || idx}`}
+                            className="p-2 rounded-lg border bg-white border-slate-100 text-xs"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <span className="font-bold text-[10px] text-slate-800 block truncate">{senderName}</span>
+                                <span className="text-[8px] text-slate-500 font-medium block truncate mt-0.5">{senderEmail}</span>
+                              </div>
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-[9px] shrink-0">
+                                Replied
+                              </span>
+                            </div>
+                            <div className="mt-1.5 border-t border-slate-100 pt-1.5 space-y-1">
+                              <p className="text-[9px] font-semibold text-slate-700 truncate">{email.subject || 'No subject'}</p>
+                              <p className="text-[9px] text-slate-500 leading-relaxed">{getBodyPreview(email.body || '') || 'No email body captured.'}</p>
+                              <p className="text-[8px] text-slate-400">{email.sent_at ? new Date(email.sent_at).toLocaleString() : ''}</p>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-center text-[10px] text-slate-500 px-3">
+                        No supplier responses captured yet. Click Refresh Insights to scan inbound replies.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 

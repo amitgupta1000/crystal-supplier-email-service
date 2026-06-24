@@ -39,13 +39,21 @@ except ImportError as e:
 # ============================================================================
 # 1. TEST GOOGLE CLOUD AUTHENTICATION
 # ============================================================================
+def resolve_credentials_path():
+    """Resolve the local service account key path."""
+    env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if env_path:
+        return os.path.abspath(os.path.expandvars(os.path.expanduser(env_path)))
+    return r"C:\gen-lang-client-0665888431-038f11096cad.json"
+
+
 def test_gcp_auth():
     """Test GCP service account authentication"""
     print("\n" + "="*70)
     print("1️⃣  TESTING GCP AUTHENTICATION")
     print("="*70)
     
-    creds_path = os.path.expanduser("~/.config/gcloud/compute-service-account-key.json")
+    creds_path = resolve_credentials_path()
     
     if not os.path.exists(creds_path):
         print(f"❌ Credentials file not found: {creds_path}")
@@ -106,10 +114,18 @@ def test_gmail_api(creds):
     print("\n" + "="*70)
     print("3️⃣  TESTING GMAIL API")
     print("="*70)
+
+    impersonate_user = os.environ.get("GMAIL_IMPERSONATE_USER")
+    if not impersonate_user:
+        print("⚠️  GMAIL_IMPERSONATE_USER not set in environment")
+        return False
     
     try:
-        # Build Gmail service
-        service = build("gmail", "v1", credentials=creds)
+        gmail_creds = creds.with_scopes(["https://www.googleapis.com/auth/gmail.modify"])
+        if hasattr(gmail_creds, "with_subject"):
+            gmail_creds = gmail_creds.with_subject(impersonate_user)
+
+        service = build("gmail", "v1", credentials=gmail_creds, cache_discovery=False)
         
         # Get user profile
         profile = service.users().getProfile(userId="me").execute()
@@ -120,7 +136,7 @@ def test_gmail_api(creds):
         print(f"   Unread Messages: {profile.get('messagesUnread')}")
         return True
     except Exception as e:
-        print(f"⚠️  Gmail API test failed (may need domain-wide delegation): {e}")
+        print(f"⚠️  Gmail API test failed for delegated user {impersonate_user}: {e}")
         return False
 
 
@@ -143,12 +159,12 @@ def test_gemini_api():
         genai.configure(api_key=api_key)
         
         # Test with a simple prompt
-        model = genai.GenerativeModel("gemini-pro")
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
         response = model.generate_content("Say 'test' in one word")
         
         if response.text:
             print(f"✅ Generative AI (Gemini) API Accessible")
-            print(f"   Model: gemini-pro")
+            print(f"   Model: gemini-2.5-flash-lite")
             print(f"   Test Response: {response.text.strip()[:50]}")
             return True
         else:

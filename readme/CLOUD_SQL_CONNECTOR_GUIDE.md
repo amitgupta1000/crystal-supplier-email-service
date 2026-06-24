@@ -80,7 +80,7 @@ engine = create_async_engine(
 
 ### 4. **Fixed GCP Credentials Path Expansion**
 
-Updated [main.py](../main.py) to expand home directory in credentials path:
+Updated the runtime to normalize `GOOGLE_APPLICATION_CREDENTIALS` for local development while still allowing ADC on GCP:
 
 ```python
 # Expand ~ to actual home directory
@@ -90,7 +90,7 @@ if gcp_creds := os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = expanded_path
 ```
 
-This ensures the path `~/.config/gcloud/compute-service-account-key.json` is properly resolved.
+This ensures local file paths are properly resolved. On Cloud Run / GCP, `GOOGLE_APPLICATION_CREDENTIALS` should be left unset so ADC can be used automatically.
 
 ### 5. **Fixed 422 Error on POST /api/jobs/start**
 
@@ -163,7 +163,7 @@ python test_start_job.py
 | `CLOUD_SQL_USER` | `postgres` | Database user |
 | `CLOUD_SQL_PASSWORD` | `*` | Database password (set at runtime) |
 | `CLOUD_SQL_DATABASE` | `inventory` | Database name |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `~/.config/gcloud/compute-service-account-key.json` | Path to GCP service account key |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `/absolute/path/to/service-account-key.json` | Local-only path to GCP service account key |
 
 ## Troubleshooting
 
@@ -180,9 +180,9 @@ python main.py
 **Cause:** Credentials are not properly configured
 
 **Solution:**
-1. Verify the credentials file exists at `~/.config/gcloud/compute-service-account-key.json`
+1. For local development, verify the credentials file exists at the configured absolute path
 2. Run `python test_connector.py` to diagnose the issue
-3. Check that `GOOGLE_APPLICATION_CREDENTIALS` path is correct
+3. Check that `GOOGLE_APPLICATION_CREDENTIALS` is correct locally, or unset it on GCP so ADC is used
 
 ### Error: "Connection refused" or "timeout"
 

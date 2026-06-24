@@ -5,6 +5,8 @@ load_dotenv()
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import List, Optional, AsyncGenerator
+from email.utils import parseaddr, parsedate_to_datetime
+from datetime import timezone
 
 # Configure SSL certificates early for all HTTPS connections
 try:
@@ -377,17 +379,76 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
         suppliers_result = await db.execute(suppliers_query)
         suppliers = suppliers_result.scalars().all()
         domains = list(set([s.domain for s in suppliers]))
+        supplier_emails = [s.email_id for s in suppliers if s.email_id]
+
+        # Skip already-ingested inbound Gmail messages across all jobs.
+        inbound_query = select(SupplierEmail.gmail_message_id).where(
+            SupplierEmail.email_type == "inbound",
+            SupplierEmail.gmail_message_id.is_not(None)
+        )
+        inbound_result = await db.execute(inbound_query)
+        processed_message_ids = set(mid for mid in inbound_result.scalars().all() if mid)
         
         logger.info(f"Refreshing insights for job {job_id}, domains: {domains}")
         
         # Process supplier responses to extract insights
-        insights_list = await process_supplier_responses(domains, job_id)
+        insights_list = await process_supplier_responses(
+            domains,
+            supplier_emails,
+            job_id,
+            include_read=True,
+            since_datetime=job.created_at,
+            subject_phrase=job.chemical_query,
+        )
         
         inserted_count = 0
         new_insights = []  # Initialize before use
-        extracted_suppliers = set()  # Track which suppliers we got responses from
+        replied_supplier_ids = set()
         
         for insight_data in insights_list:
+            if insight_data.message_id and insight_data.message_id in processed_message_ids:
+                continue
+
+            email_received_at = None
+            if insight_data.email_date:
+                try:
+                    parsed_dt = parsedate_to_datetime(insight_data.email_date)
+                    if parsed_dt is not None:
+                        email_received_at = parsed_dt.astimezone(timezone.utc).replace(tzinfo=None) if parsed_dt.tzinfo else parsed_dt
+                except Exception:
+                    email_received_at = None
+
+            if email_received_at and email_received_at < job.created_at:
+                logger.info("Skipping old email %s for job %s", insight_data.message_id, job_id)
+                continue
+
+            parsed_from = parseaddr(insight_data.from_email or "")[1].lower()
+            sender_domain = parsed_from.split("@")[-1] if "@" in parsed_from else ""
+
+            matched_supplier = None
+            for supplier in suppliers:
+                supplier_email = (supplier.email_id or "").lower()
+                supplier_domain = (supplier.domain or "").lower()
+                if parsed_from and supplier_email == parsed_from:
+                    matched_supplier = supplier
+                    break
+                if sender_domain and supplier_domain and sender_domain == supplier_domain:
+                    matched_supplier = supplier
+                    break
+
+            email_record = SupplierEmail(
+                job_id=job_id,
+                supplier_state_id=matched_supplier.id if matched_supplier else None,
+                email_type="inbound",
+                from_email=parsed_from or (insight_data.from_email or "unknown"),
+                to_email=job.user_email,
+                subject=insight_data.email_subject or "Supplier reply",
+                body=insight_data.email_body or "",
+                sent_at=email_received_at or datetime.utcnow(),
+                gmail_message_id=insight_data.message_id,
+            )
+            db.add(email_record)
+
             # Check if insight already exists
             existing_query = select(Insight).where(
                 Insight.job_id == job_id,
@@ -410,24 +471,14 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
                 )
                 db.add(insight)
                 inserted_count += 1
-            
-            # Track that we got a response (for marking suppliers as replied)
-            extracted_suppliers.add(insight_data.supplier or "Unknown")
+
+            if matched_supplier:
+                matched_supplier.replied = True
+                matched_supplier.reply_received_at = datetime.utcnow()
+                replied_supplier_ids.add(matched_supplier.id)
         
-        # Mark suppliers as replied based on extracted insights
-        # Only mark suppliers that have insights extracted in their name
-        now = datetime.utcnow()
-        if extracted_suppliers:
-            for supplier in suppliers:
-                # Check if this supplier has any insights with matching company name
-                for extracted_supplier_name in extracted_suppliers:
-                    if (extracted_supplier_name.lower() in supplier.company_name.lower() or 
-                        supplier.company_name.lower() in extracted_supplier_name.lower() or
-                        extracted_supplier_name.lower() == "internal test"):
-                        supplier.replied = True
-                        supplier.reply_received_at = now
-                        logger.info(f"Marked supplier {supplier.company_name} ({supplier.domain}) as replied based on extracted insights from {extracted_supplier_name}")
-                        break
+        if replied_supplier_ids:
+            logger.info(f"Marked {len(replied_supplier_ids)} suppliers as replied for job {job_id}")
         
         # Count ALL insights for total_responses (including new ones just added)
         all_insights_query = select(Insight).where(Insight.job_id == job_id)

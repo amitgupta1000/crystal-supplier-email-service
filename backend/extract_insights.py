@@ -38,9 +38,19 @@ class InsightData(BaseModel):
     delivery_date: Optional[str] = None
     key_terms: Optional[str] = None
     email_body: Optional[str] = None  # Complete email for drilldowns
+    from_email: Optional[str] = None
+    message_id: Optional[str] = None
+    email_subject: Optional[str] = None
+    email_date: Optional[str] = None
 
 
-async def extract_insights_from_email(email_subject: str, email_body: str) -> Optional[InsightData]:
+async def extract_insights_from_email(
+    email_subject: str,
+    email_body: str,
+    from_email: Optional[str] = None,
+    message_id: Optional[str] = None,
+    email_date: Optional[str] = None,
+) -> Optional[InsightData]:
     """Extract structured insights from supplier email using Generative AI."""
     if not GENAI_AVAILABLE or not genai_client:
         logger.error("google.genai not available or not configured")
@@ -80,6 +90,10 @@ Body: {email_body}"""
                 data = json.loads(json_str)
                 # Add the complete email body for drilldowns
                 data['email_body'] = email_body
+                data['from_email'] = from_email
+                data['message_id'] = message_id
+                data['email_subject'] = email_subject
+                data['email_date'] = email_date
                 insight = InsightData(**data)
                 logger.info(f"Successfully extracted insights from email")
                 logger.debug(f"Extracted data: supplier={insight.supplier}, contact={insight.contact_person}, product={insight.product}, price={insight.price}")
@@ -97,7 +111,15 @@ Body: {email_body}"""
         return None
 
 
-async def process_supplier_responses(supplier_domains: List[str], job_id: int) -> List[InsightData]:
+async def process_supplier_responses(
+    supplier_domains: List[str],
+    supplier_emails: List[str],
+    job_id: int,
+    include_read: bool = True,
+    since_datetime=None,
+    recipient_email: Optional[str] = None,
+    subject_phrase: Optional[str] = None,
+) -> List[InsightData]:
     """
     Fetches unread emails from suppliers and extracts insights using AI.
     Returns a list of InsightData objects.
@@ -105,14 +127,27 @@ async def process_supplier_responses(supplier_domains: List[str], job_id: int) -
     logger.info(f"Processing supplier responses for job {job_id}")
     
     # Fetch unread emails from supplier domains
-    emails = await fetch_unread_replies(supplier_domains)
+    emails = await fetch_unread_replies(
+        supplier_domains,
+        supplier_emails=supplier_emails,
+        include_read=include_read,
+        since_datetime=since_datetime,
+        recipient_email=recipient_email,
+        subject_phrase=subject_phrase,
+    )
     logger.info(f"Fetched {len(emails)} unread emails")
     
     insights = []
     
     for email in emails:
         try:
-            insight = await extract_insights_from_email(email['subject'], email['body'])
+            insight = await extract_insights_from_email(
+                email['subject'],
+                email['body'],
+                from_email=email.get('from'),
+                message_id=email.get('id'),
+                email_date=email.get('date'),
+            )
             if insight:
                 # Extract supplier from email if not already in data
                 if not insight.supplier:

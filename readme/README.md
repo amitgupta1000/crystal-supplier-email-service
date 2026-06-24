@@ -180,7 +180,8 @@ Create `.env` file in the project root:
 
 ```bash
 # Google Cloud Configuration
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json
+# Local development only. On Cloud Run, use the attached service account via ADC.
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account-key.json
 GOOGLE_CLOUD_PROJECT=your-gcp-project-id
 
 # Gmail Configuration
@@ -356,7 +357,8 @@ gcloud iam service-accounts keys create sa-key.json \
 #    - Add the service account client ID with scope:
 #      https://www.googleapis.com/auth/gmail.modify
 
-# 2. Set environment variable with the key file path
+# 2. For local development, set GOOGLE_APPLICATION_CREDENTIALS to your key file path.
+#    On Cloud Run, do not set GOOGLE_APPLICATION_CREDENTIALS; use ADC instead.
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json
 ```
 

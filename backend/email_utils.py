@@ -7,6 +7,7 @@ import base64
 import logging
 import asyncio
 from typing import List, Optional
+from datetime import datetime
 
 try:
     from google.oauth2 import service_account
@@ -24,9 +25,29 @@ GMAIL_IMPERSONATE_USER = os.environ.get("GMAIL_IMPERSONATE_USER", "user@example.
 EMAIL_SENDER = os.environ.get("EMAIL_SENDER", GMAIL_IMPERSONATE_USER)
 EMAIL_RECIPIENTS = os.environ.get("EMAIL_RECIPIENTS", "").split(",")
 
+
+def normalize_google_credentials_path() -> None:
+    """Expand and validate GOOGLE_APPLICATION_CREDENTIALS for local runs."""
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not creds_path:
+        return
+
+    normalized_path = os.path.abspath(os.path.expandvars(os.path.expanduser(creds_path)))
+    if os.path.exists(normalized_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = normalized_path
+    else:
+        logger.debug("Removing non-existent GOOGLE_APPLICATION_CREDENTIALS: %s", normalized_path)
+        os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+
+
+normalize_google_credentials_path()
+
 def is_email_configured() -> bool:
     if not GOOGLE_API_CLIENT_AVAILABLE:
         logger.warning("Email configuration incomplete: Google API libraries not installed")
+        return False
+    if not GMAIL_IMPERSONATE_USER or GMAIL_IMPERSONATE_USER == "user@example.com":
+        logger.warning("Email configuration incomplete: GMAIL_IMPERSONATE_USER is not set")
         return False
     return True
 
@@ -35,12 +56,7 @@ def get_gmail_service(scopes: List[str]):
     Initialize Gmail API service using Application Default Credentials.
     SSL certificates configured in main.py via certifi.
     """
-    creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
-    if creds_path:
-        creds_path = os.path.expanduser(creds_path)
-        if not os.path.exists(creds_path):
-            logger.debug(f"Removing non-existent GOOGLE_APPLICATION_CREDENTIALS: {creds_path}")
-            os.environ.pop('GOOGLE_APPLICATION_CREDENTIALS', None)
+    normalize_google_credentials_path()
     
     # Use Application Default Credentials
     creds, _ = google.auth.default(scopes=scopes)
@@ -128,7 +144,14 @@ async def send_email_with_attachments(
         logger.exception(f"Unexpected error while sending email: {e}")
         return False
 
-async def fetch_unread_replies(domains: List[str]) -> List[dict]:
+async def fetch_unread_replies(
+    domains: List[str],
+    supplier_emails: Optional[List[str]] = None,
+    include_read: bool = False,
+    since_datetime: Optional[datetime] = None,
+    recipient_email: Optional[str] = None,
+    subject_phrase: Optional[str] = None,
+) -> List[dict]:
     """
     Fetches unread emails from a list of supplier domains.
     Returns a list of dicts with 'id', 'from', 'subject', 'body', 'date'.
@@ -143,12 +166,44 @@ async def fetch_unread_replies(domains: List[str]) -> List[dict]:
         logger.error(f"Failed to initialize Gmail read service: {e}")
         return []
 
-    query = "is:unread (" + " OR ".join([f"from:{domain}" for domain in domains]) + ")"
-    logger.info(f"Querying Gmail: {query}")
+    sender_terms = []
+    # Prefer exact supplier email IDs, but include supplier domains too since
+    # many vendors reply from different aliases within the same domain.
+    if supplier_emails:
+        sender_terms.extend([f"from:{email}" for email in supplier_emails if email])
+    if domains:
+        sender_terms.extend([f"from:{domain}" for domain in domains if domain])
+
+    sender_clause = " OR ".join(sender_terms) if sender_terms else ""
+    unread_clause = "" if include_read else "is:unread "
+    after_clause = ""
+    if since_datetime:
+        after_clause = f" after:{int(since_datetime.timestamp())}"
+
+    recipient_clause = f" to:{recipient_email}" if recipient_email else ""
+
+    inbox_clause = " in:inbox"
+    query = f"{unread_clause}({sender_clause}){inbox_clause}{recipient_clause}{after_clause}" if sender_clause else f"{unread_clause.strip()}{inbox_clause}{recipient_clause}{after_clause}"
+    logger.info(f"Querying Gmail (sender): {query}")
     
     try:
         results = await asyncio.to_thread(lambda: service.users().messages().list(userId='me', q=query, maxResults=50).execute())
         messages = results.get('messages', [])
+
+        if subject_phrase:
+            subject_query = f'{unread_clause.strip()} subject:"{subject_phrase}"{inbox_clause}{after_clause}'.strip()
+            logger.info(f"Querying Gmail (subject fallback): {subject_query}")
+            subject_results = await asyncio.to_thread(
+                lambda: service.users().messages().list(userId='me', q=subject_query, maxResults=50).execute()
+            )
+            subject_messages = subject_results.get('messages', [])
+            if subject_messages:
+                seen_ids = {m.get('id') for m in messages if m.get('id')}
+                for m in subject_messages:
+                    mid = m.get('id')
+                    if mid and mid not in seen_ids:
+                        messages.append(m)
+                        seen_ids.add(mid)
         
         extracted_emails = []
         

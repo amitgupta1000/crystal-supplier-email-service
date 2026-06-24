@@ -9,6 +9,25 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
+def normalize_google_credentials_path() -> None:
+    """Expand and validate GOOGLE_APPLICATION_CREDENTIALS for local runs."""
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if not creds_path:
+        return
+
+    normalized_path = os.path.abspath(os.path.expandvars(os.path.expanduser(creds_path)))
+    if os.path.exists(normalized_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = normalized_path
+    else:
+        logger.warning(
+            "GOOGLE_APPLICATION_CREDENTIALS path does not exist: %s",
+            normalized_path,
+        )
+
+
+normalize_google_credentials_path()
+
 # SSL certificates configured in main.py - reuse environment variables
 USE_SQLITE = os.environ.get("USE_SQLITE", "false").lower() == "true"
 

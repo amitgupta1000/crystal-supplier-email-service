@@ -6,8 +6,8 @@
 - **Project ID**: `gen-lang-client-0665888431`
 - **Active User**: `amit.gupta@coralbayadvisory.com`
 - **Service Account**: `451921002283-compute@developer.gserviceaccount.com`
-- **Credentials File**: `~/.config/gcloud/compute-service-account-key.json`
-- **Environment Variable**: `GOOGLE_APPLICATION_CREDENTIALS` (set persistently)
+- **Local Credentials File**: Optional for local development only
+- **Runtime Authentication**: Use ADC on Cloud Run / GCP
 
 ✅ **Status**: Service account authenticated and configured
 
@@ -79,7 +79,8 @@ Add these to your `.env` file:
 
 ```bash
 # GCP Authentication
-GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/compute-service-account-key.json
+# Local development only. On Cloud Run, leave GOOGLE_APPLICATION_CREDENTIALS unset.
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account-key.json
 GOOGLE_CLOUD_PROJECT=gen-lang-client-0665888431
 GCP_SERVICE_ACCOUNT_EMAIL=451921002283-compute@developer.gserviceaccount.com
 
