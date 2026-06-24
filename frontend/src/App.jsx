@@ -6,6 +6,10 @@ import {
   Sparkles, Mail, Database, Ban, Inbox, ArrowRight, Eye, X
 } from 'lucide-react';
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
+
+const apiUrl = (path) => `${API_BASE_URL}${path}`;
+
 function App() {
   const [jobs, setJobs] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -41,7 +45,7 @@ function App() {
   const fetchJobs = async (selectNewest = false) => {
     setLoadingJobs(true);
     try {
-      const res = await fetch('http://localhost:8000/api/jobs');
+      const res = await fetch(apiUrl('/api/jobs'));
       const data = await res.json();
       setJobs(data);
       if (data.length > 0) {
@@ -60,7 +64,7 @@ function App() {
   const fetchSuppliers = async () => {
     setLoadingSuppliers(true);
     try {
-      const res = await fetch('http://localhost:8000/api/suppliers');
+      const res = await fetch(apiUrl('/api/suppliers'));
       const data = await res.json();
       setSuppliers(data);
     } catch (e) {
@@ -81,7 +85,7 @@ function App() {
     if (selectedJobId) {
       const fetchJobDetail = async () => {
         try {
-          const res = await fetch(`http://localhost:8000/api/jobs/${selectedJobId}`);
+          const res = await fetch(apiUrl(`/api/jobs/${selectedJobId}`));
           if (res.ok) {
             const data = await res.json();
             setSelectedJobDetail(data);
@@ -146,7 +150,7 @@ function App() {
 
     setLaunching(true);
     try {
-      const res = await fetch('http://localhost:8000/api/jobs/start', {
+      const res = await fetch(apiUrl('/api/jobs/start'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -174,7 +178,7 @@ function App() {
     if (!selectedJob) return;
     setRefreshing(true);
     try {
-      const res = await fetch(`http://localhost:8000/api/jobs/${selectedJob.id}/insights/refresh`, { method: 'POST' });
+      const res = await fetch(apiUrl(`/api/jobs/${selectedJob.id}/insights/refresh`), { method: 'POST' });
       const data = await res.json();
       showToast(data.message);
       await fetchJobs();
@@ -191,7 +195,7 @@ function App() {
     if (!window.confirm("Archive this campaign final insights to GCS?")) return;
     
     try {
-      const res = await fetch(`http://localhost:8000/api/jobs/${selectedJob.id}/close`, { method: 'POST' });
+      const res = await fetch(apiUrl(`/api/jobs/${selectedJob.id}/close`), { method: 'POST' });
       const data = await res.json();
       showToast(data.message);
       await fetchJobs();

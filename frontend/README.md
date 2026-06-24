@@ -24,6 +24,28 @@ npm run dev
 ```
 The application will be available at `http://localhost:5173`. Ensure the FastAPI backend is also running concurrently to supply data to the application.
 
+## Production Docker Build
+Build the frontend container from the `frontend/` directory:
+
+```bash
+docker build -t crystal-frontend .
+docker run --rm -p 8080:8080 crystal-frontend
+```
+
+The container serves the Vite production build on `http://localhost:8080`. The runtime process binds to Cloud Run's `PORT` environment variable automatically, and the API base URL is baked in at build time from `.env.production`.
+
+## Deploy To Cloud Run
+From the repository root, deploy the frontend as a separate Cloud Run service:
+
+```bash
+gcloud run deploy crystal-supplier-email-frontend \
+	--source frontend \
+	--region asia-south1 \
+	--allow-unauthenticated
+```
+
+That build uses `frontend/Dockerfile`, serves the static bundle on the `PORT` provided by Cloud Run, and uses `.env.production` so API requests target the deployed backend.
+
 ## Features
 - **Campaign Dashboard**: View active and closed jobs.
 - **Supplier Tracking**: Monitor real-time status of supplier replies and reminder emails.
