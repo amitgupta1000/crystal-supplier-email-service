@@ -184,7 +184,8 @@ async def process_active_jobs_async():
                             success = await send_reminder_email(
                                 supplier.email_id,
                                 supplier.company_name,
-                                job.chemical_query
+                                job.chemical_query,
+                                job_id=job.id,
                             )
                             if success:
                                 supplier.reminder_sent_at = now
@@ -210,7 +211,8 @@ async def process_active_jobs_async():
                             success = await send_reminder_email(
                                 supplier.email_id,
                                 supplier.company_name,
-                                job.chemical_query
+                                job.chemical_query,
+                                job_id=job.id,
                             )
                             if success:
                                 supplier.reminder_sent_at = now

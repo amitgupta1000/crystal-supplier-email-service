@@ -20,6 +20,12 @@ function App() {
   const [toast, setToast] = useState(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState(null);
+  const [showSupplierTableModal, setShowSupplierTableModal] = useState(false);
+  const [supplierTablePassword, setSupplierTablePassword] = useState('');
+  const [supplierTableAuthorized, setSupplierTableAuthorized] = useState(false);
+  const [supplierTableRows, setSupplierTableRows] = useState([]);
+  const [supplierTableLoading, setSupplierTableLoading] = useState(false);
+  const [supplierTableSaving, setSupplierTableSaving] = useState(false);
   
   // States for Launchpad (Column 1)
   const [query, setQuery] = useState('');
@@ -210,6 +216,103 @@ function App() {
     }
   };
 
+  const closeSupplierTableModal = () => {
+    setShowSupplierTableModal(false);
+    setSupplierTableAuthorized(false);
+    setSupplierTablePassword('');
+    setSupplierTableRows([]);
+    setSupplierTableLoading(false);
+    setSupplierTableSaving(false);
+  };
+
+  const handleOpenSupplierTable = () => {
+    setShowSupplierTableModal(true);
+  };
+
+  const handleUnlockSupplierTable = async () => {
+    if (!supplierTablePassword.trim()) {
+      showToast('Enter password to access supplier table', 'error');
+      return;
+    }
+
+    setSupplierTableLoading(true);
+    try {
+      const res = await fetch(apiUrl('/api/suppliers/table'), {
+        headers: {
+          'x-admin-password': supplierTablePassword
+        }
+      });
+
+      if (!res.ok) {
+        showToast('Invalid password', 'error');
+        return;
+      }
+
+      const data = await res.json();
+      setSupplierTableRows(Array.isArray(data.rows) ? data.rows : []);
+      setSupplierTableAuthorized(true);
+      showToast('Supplier table unlocked');
+    } catch (e) {
+      console.error(e);
+      showToast('Failed to load supplier table', 'error');
+    } finally {
+      setSupplierTableLoading(false);
+    }
+  };
+
+  const handleSupplierTableRowChange = (index, field, value) => {
+    setSupplierTableRows((prev) => prev.map((row, idx) => {
+      if (idx !== index) return row;
+      return { ...row, [field]: value };
+    }));
+  };
+
+  const handleAddSupplierTableRow = () => {
+    setSupplierTableRows((prev) => [
+      ...prev,
+      {
+        company_name: '',
+        key_person_1: '',
+        location: '',
+        email_id: '',
+        salutation_1: ''
+      }
+    ]);
+  };
+
+  const handleDeleteSupplierTableRow = (index) => {
+    setSupplierTableRows((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleSaveSupplierTable = async () => {
+    setSupplierTableSaving(true);
+    try {
+      const res = await fetch(apiUrl('/api/suppliers/table'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: supplierTablePassword,
+          rows: supplierTableRows
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.detail || 'Failed to save supplier table', 'error');
+        return;
+      }
+
+      await fetchSuppliers();
+      showToast('suppliers.csv updated successfully');
+      closeSupplierTableModal();
+    } catch (e) {
+      console.error(e);
+      showToast('Failed to save supplier table', 'error');
+    } finally {
+      setSupplierTableSaving(false);
+    }
+  };
+
   const filteredSuppliers = suppliers.filter(s => 
     s.company_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
     s.email_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -284,6 +387,14 @@ function App() {
               {avgPrice}
             </span>
           </div>
+
+          <button
+            onClick={handleOpenSupplierTable}
+            className="px-2 py-1 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold text-[10px] transition-colors"
+            title="Update Email Table"
+          >
+            Update Email Table
+          </button>
 
           <button 
             onClick={() => { fetchJobs(); fetchSuppliers(); showToast('Console dashboard synced'); }} 
@@ -875,6 +986,138 @@ function App() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showSupplierTableModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col">
+            <div className="shrink-0 border-b border-slate-200 px-6 py-4 flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Update Email Table</h3>
+                <p className="text-sm text-slate-500">Edit supplier data and save to suppliers.csv</p>
+              </div>
+              <button
+                onClick={closeSupplierTableModal}
+                className="p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-500 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {!supplierTableAuthorized ? (
+              <div className="p-6 space-y-4">
+                <p className="text-sm text-slate-600">This utility is password-protected.</p>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={supplierTablePassword}
+                    onChange={(e) => setSupplierTablePassword(e.target.value)}
+                    placeholder="Enter password"
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  />
+                  <button
+                    onClick={handleUnlockSupplierTable}
+                    disabled={supplierTableLoading}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold text-sm disabled:opacity-50"
+                  >
+                    {supplierTableLoading ? 'Unlocking...' : 'Unlock'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex-1 overflow-auto p-4">
+                  <table className="w-full min-w-[950px] border-collapse text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                        <th className="text-left p-2">Company Name</th>
+                        <th className="text-left p-2">Key Person 1</th>
+                        <th className="text-left p-2">Location</th>
+                        <th className="text-left p-2">Email ID</th>
+                        <th className="text-left p-2">Salutation 1</th>
+                        <th className="text-center p-2 w-16">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {supplierTableRows.map((row, idx) => (
+                        <tr key={idx} className="border-b border-slate-100">
+                          <td className="p-2">
+                            <input
+                              value={row.company_name || ''}
+                              onChange={(e) => handleSupplierTableRowChange(idx, 'company_name', e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              value={row.key_person_1 || ''}
+                              onChange={(e) => handleSupplierTableRowChange(idx, 'key_person_1', e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              value={row.location || ''}
+                              onChange={(e) => handleSupplierTableRowChange(idx, 'location', e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              value={row.email_id || ''}
+                              onChange={(e) => handleSupplierTableRowChange(idx, 'email_id', e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              value={row.salutation_1 || ''}
+                              onChange={(e) => handleSupplierTableRowChange(idx, 'salutation_1', e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded px-2 py-1 text-xs"
+                            />
+                          </td>
+                          <td className="p-2 text-center">
+                            <button
+                              onClick={() => handleDeleteSupplierTableRow(idx)}
+                              className="px-2 py-1 rounded border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="shrink-0 border-t border-slate-200 px-6 py-3 flex justify-between items-center">
+                  <button
+                    onClick={handleAddSupplierTableRow}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium text-sm flex items-center gap-1.5"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    Add Row
+                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={closeSupplierTableModal}
+                      className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg font-medium text-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveSupplierTable}
+                      disabled={supplierTableSaving}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-sm disabled:opacity-50"
+                    >
+                      {supplierTableSaving ? 'Saving...' : 'Save to suppliers.csv'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

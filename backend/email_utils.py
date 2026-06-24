@@ -258,9 +258,15 @@ def _get_message_body(message: dict) -> str:
         return ""
 
 
-async def send_reminder_email(supplier_email: str, supplier_name: str, chemical_query: str) -> bool:
+async def send_reminder_email(
+    supplier_email: str,
+    supplier_name: str,
+    chemical_query: str,
+    job_id: Optional[int] = None,
+) -> bool:
     """Sends a reminder email to a supplier who hasn't responded."""
-    subject = f"Reminder: Request for Quote - {chemical_query}"
+    job_tag = f"[JOB-{job_id}] " if job_id is not None else ""
+    subject = f"{job_tag}Reminder: Request for Quote - {chemical_query}"
     
     body = f"""
     <p>Dear {supplier_name},</p>

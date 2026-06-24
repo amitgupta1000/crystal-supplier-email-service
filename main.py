@@ -16,7 +16,7 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +31,13 @@ from backend.notification_service import send_insight_notification
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+SUPPLIER_TABLE_PASSWORD = os.getenv("SUPPLIER_TABLE_PASSWORD", "Crystal12345")
+SUPPLIERS_CSV_HEADERS = ["Company Name", "Key Person 1", "Location", "Email ID", "Salutation 1"]
+
+
+def build_job_subject_tag(job_id: int) -> str:
+    return f"[JOB-{job_id}]"
 
 
 async def init_db():
@@ -121,6 +128,23 @@ class SupplierResponse(BaseModel):
     salutation: str
 
 
+class SupplierTableRow(BaseModel):
+    company_name: str = ""
+    key_person_1: str = ""
+    location: str = ""
+    email_id: str = ""
+    salutation_1: str = ""
+
+
+class SupplierTableResponse(BaseModel):
+    rows: List[SupplierTableRow]
+
+
+class UpdateSupplierTableRequest(BaseModel):
+    password: str
+    rows: List[SupplierTableRow]
+
+
 class HealthResponse(BaseModel):
     status: str
     message: str
@@ -209,6 +233,57 @@ def get_suppliers():
     except FileNotFoundError:
         logger.error("suppliers.csv not found")
     return suppliers
+
+
+def _require_supplier_table_password(password: str) -> None:
+    if password != SUPPLIER_TABLE_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+
+@app.get("/api/suppliers/table", response_model=SupplierTableResponse)
+def get_suppliers_table(x_admin_password: str = Header(default="", alias="x-admin-password")):
+    """Get full editable supplier table from suppliers.csv (password protected)."""
+    _require_supplier_table_password(x_admin_password)
+
+    rows: List[SupplierTableRow] = []
+    if not os.path.exists("suppliers.csv"):
+        return {"rows": rows}
+
+    with open("suppliers.csv", "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(SupplierTableRow(
+                company_name=row.get("Company Name", ""),
+                key_person_1=row.get("Key Person 1", ""),
+                location=row.get("Location", ""),
+                email_id=row.get("Email ID", ""),
+                salutation_1=row.get("Salutation 1", ""),
+            ))
+
+    return {"rows": rows}
+
+
+@app.put("/api/suppliers/table", response_model=dict)
+def update_suppliers_table(payload: UpdateSupplierTableRequest):
+    """Update suppliers.csv from frontend editable table (password protected)."""
+    _require_supplier_table_password(payload.password)
+
+    with open("suppliers.csv", "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=SUPPLIERS_CSV_HEADERS)
+        writer.writeheader()
+        for row in payload.rows:
+            writer.writerow({
+                "Company Name": (row.company_name or "").strip(),
+                "Key Person 1": (row.key_person_1 or "").strip(),
+                "Location": (row.location or "").strip(),
+                "Email ID": (row.email_id or "").strip(),
+                "Salutation 1": (row.salutation_1 or "").strip(),
+            })
+
+    return {
+        "message": "Supplier table updated successfully",
+        "rows_saved": len(payload.rows),
+    }
 
 
 # ============================================================================
@@ -302,8 +377,8 @@ async def start_job(request: StartJobRequest, db: AsyncSession = Depends(get_db)
             db.add(state)
             await db.flush()
             
-            # Send initial RFQ email with personalized salutation
-            subject = f"Request for Quote: {request.chemical_query}"
+            # Send initial RFQ email with personalized salutation and a stable job tag.
+            subject = f"{build_job_subject_tag(new_job.id)} Request for Quote: {request.chemical_query}"
             body = f"""
             <p>{salutation},</p>
             
@@ -392,13 +467,14 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
         logger.info(f"Refreshing insights for job {job_id}, domains: {domains}")
         
         # Process supplier responses to extract insights
+        job_subject_tag = build_job_subject_tag(job_id)
         insights_list = await process_supplier_responses(
             domains,
             supplier_emails,
             job_id,
             include_read=True,
             since_datetime=job.created_at,
-            subject_phrase=job.chemical_query,
+            subject_phrase=job_subject_tag,
         )
         
         inserted_count = 0
@@ -407,6 +483,11 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
         
         for insight_data in insights_list:
             if insight_data.message_id and insight_data.message_id in processed_message_ids:
+                continue
+
+            email_subject = insight_data.email_subject or ""
+            if job_subject_tag.lower() not in email_subject.lower():
+                logger.info("Skipping email without %s in subject for job %s", job_subject_tag, job_id)
                 continue
 
             email_received_at = None
@@ -610,7 +691,8 @@ async def send_reminder(job_id: int, supplier_id: int, db: AsyncSession = Depend
         success = await send_reminder_email(
             supplier.email_id,
             supplier.company_name,
-            job.chemical_query
+            job.chemical_query,
+            job_id=job_id,
         )
         
         if success:
@@ -622,7 +704,7 @@ async def send_reminder(job_id: int, supplier_id: int, db: AsyncSession = Depend
                 email_type="outbound",
                 from_email="noreply@yourdomain.com",
                 to_email=supplier.email_id,
-                subject=f"Reminder: Request for Quote - {job.chemical_query}",
+                subject=f"{build_job_subject_tag(job.id)} Reminder: Request for Quote - {job.chemical_query}",
                 body="[Reminder email sent]"
             )
             db.add(email_record)
