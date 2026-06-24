@@ -182,8 +182,7 @@ async def fetch_unread_replies(
 
     recipient_clause = f" to:{recipient_email}" if recipient_email else ""
 
-    inbox_clause = " in:inbox"
-    query = f"{unread_clause}({sender_clause}){inbox_clause}{recipient_clause}{after_clause}" if sender_clause else f"{unread_clause.strip()}{inbox_clause}{recipient_clause}{after_clause}"
+    query = f"{unread_clause}({sender_clause}){recipient_clause}{after_clause}" if sender_clause else f"{unread_clause.strip()}{recipient_clause}{after_clause}"
     logger.info(f"Querying Gmail (sender): {query}")
     
     try:
@@ -191,7 +190,7 @@ async def fetch_unread_replies(
         messages = results.get('messages', [])
 
         if subject_phrase:
-            subject_query = f'{unread_clause.strip()} subject:"{subject_phrase}"{inbox_clause}{after_clause}'.strip()
+            subject_query = f'{unread_clause.strip()} subject:"{subject_phrase}" -from:{EMAIL_SENDER}{after_clause}'.strip()
             logger.info(f"Querying Gmail (subject fallback): {subject_query}")
             subject_results = await asyncio.to_thread(
                 lambda: service.users().messages().list(userId='me', q=subject_query, maxResults=50).execute()

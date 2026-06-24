@@ -181,6 +181,11 @@ function App() {
       const res = await fetch(apiUrl(`/api/jobs/${selectedJob.id}/insights/refresh`), { method: 'POST' });
       const data = await res.json();
       showToast(data.message);
+      const detailRes = await fetch(apiUrl(`/api/jobs/${selectedJob.id}`));
+      if (detailRes.ok) {
+        const detailData = await detailRes.json();
+        setSelectedJobDetail(detailData);
+      }
       await fetchJobs();
     } catch (e) {
       console.error(e);
