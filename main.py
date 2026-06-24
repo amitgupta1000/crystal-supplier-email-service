@@ -1,5 +1,7 @@
 import csv
 import os
+from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import List, Optional, AsyncGenerator
@@ -130,6 +132,11 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down application...")
     await engine.dispose()
+    try:
+        from backend.database import close_connector
+        await close_connector()
+    except Exception as e:
+        logger.warning(f"⚠️ Error closing Cloud SQL Connector: {e}")
 
 
 app = FastAPI(title="CRYSTAL SUPPLIER EMAIL SERVICE", lifespan=lifespan)

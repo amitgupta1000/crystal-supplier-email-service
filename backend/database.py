@@ -1,5 +1,7 @@
 import os
 import logging
+from dotenv import load_dotenv
+load_dotenv()
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, relationship
@@ -10,43 +12,91 @@ logger = logging.getLogger(__name__)
 # SSL certificates configured in main.py - reuse environment variables
 USE_SQLITE = os.environ.get("USE_SQLITE", "false").lower() == "true"
 
+_connectors_by_loop = {}
+
+def get_connector():
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    
+    global _connectors_by_loop
+    if loop not in _connectors_by_loop:
+        from google.cloud.sql.connector import Connector
+        _connectors_by_loop[loop] = Connector(loop=loop)
+    return _connectors_by_loop[loop]
+
+async def close_connector():
+    global _connectors_by_loop
+    for loop, connector in list(_connectors_by_loop.items()):
+        try:
+            await connector.close_async()
+        except Exception:
+            pass
+    _connectors_by_loop.clear()
+
+async def _getconn():
+    connector = get_connector()
+    connection_name = os.environ.get("CLOUD_SQL_CONNECTION_NAME", "gen-lang-client-0665888431:asia-south1:crystal-inventory-dash")
+    user = os.environ.get("CLOUD_SQL_USER", "postgres")
+    password = os.environ.get("CLOUD_SQL_PASSWORD")
+    database = os.environ.get("CLOUD_SQL_DATABASE", "inventory")
+    if not password:
+        raise ValueError("CLOUD_SQL_PASSWORD environment variable is required")
+    return await connector.connect_async(
+        connection_name,
+        "asyncpg",
+        user=user,
+        password=password,
+        db=database,
+    )
+
 if USE_SQLITE:
     DATABASE_URL = "sqlite+aiosqlite:///./jobs.db"
     logger.info("📊 Using SQLite database: ./jobs.db")
+    
+    engine = create_async_engine(
+        DATABASE_URL,
+        echo=False,
+        future=True,
+    )
+    
+    scheduler_engine = create_async_engine(
+        DATABASE_URL,
+        echo=False,
+        future=True,
+        pool_pre_ping=False,
+        poolclass=None,
+    )
 else:
     password = os.environ.get("CLOUD_SQL_PASSWORD")
     if not password:
         raise ValueError("CLOUD_SQL_PASSWORD environment variable is required")
     
-    host = os.environ.get("CLOUD_SQL_HOST", "35.200.192.16")
-    port = os.environ.get("CLOUD_SQL_PORT", "5432")
-    user = os.environ.get("CLOUD_SQL_USER", "postgres")
-    database = os.environ.get("CLOUD_SQL_DATABASE", "inventory")
+    logger.info("📊 Using Cloud SQL with Python Connector")
     
-    DATABASE_URL = f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
-    logger.info(f"📊 Using Cloud SQL: postgresql+asyncpg://{user}:***@{host}:{port}/{database}")
-
-# Main engine for API requests
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    future=True,
-    pool_pre_ping=not USE_SQLITE,
-    **({"connect_args": {"ssl": "prefer", "server_settings": {"application_name": "crystal-email-service"}}} if not USE_SQLITE else {}),
-)
+    engine = create_async_engine(
+        "postgresql+asyncpg://",
+        async_creator=_getconn,
+        echo=False,
+        future=True,
+        pool_pre_ping=True,
+        connect_args={"server_settings": {"application_name": "crystal-email-service"}},
+    )
+    
+    scheduler_engine = create_async_engine(
+        "postgresql+asyncpg://",
+        async_creator=_getconn,
+        echo=False,
+        future=True,
+        pool_pre_ping=False,
+        poolclass=None,
+        connect_args={"server_settings": {"application_name": "crystal-email-service-scheduler"}},
+    )
 
 AsyncSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
-)
-
-# Scheduler engine: runs in background thread with separate event loop
-scheduler_engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    future=True,
-    pool_pre_ping=False,  # Prevent connection issues across event loops
-    poolclass=None,
-    **({"connect_args": {"ssl": "prefer", "server_settings": {"application_name": "crystal-email-service-scheduler"}}} if not USE_SQLITE else {}),
 )
 
 SchedulerAsyncSessionLocal = async_sessionmaker(
