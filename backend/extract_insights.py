@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import asyncio
+import random
 from typing import List, Dict, Optional
 from .email_utils import fetch_unread_replies
 from pydantic import BaseModel
@@ -14,6 +15,24 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+GENAI_MAX_RETRIES = int(os.environ.get("GENAI_MAX_RETRIES", "3"))
+GENAI_RETRY_BASE_DELAY_SECONDS = float(os.environ.get("GENAI_RETRY_BASE_DELAY_SECONDS", "1.0"))
+
+
+def _is_retryable_genai_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    retry_markers = [
+        "503",
+        "unavailable",
+        "429",
+        "rate",
+        "quota",
+        "deadline",
+        "timeout",
+        "internal",
+    ]
+    return any(marker in msg for marker in retry_markers)
 
 # Initialize Generative AI
 genai_client = None
@@ -56,8 +75,7 @@ async def extract_insights_from_email(
         logger.error("google.genai not available or not configured")
         return None
     
-    try:
-        prompt = f"""Extract supplier quote data from this email. Return valid JSON only:
+    prompt = f"""Extract supplier quote data from this email. Return valid JSON only:
 - supplier: Company name (required, infer if needed; use "Internal Test" for self-replies)
 - contact_person: Contact name if identifiable
 - product: Product description
@@ -70,15 +88,37 @@ Rules: Always include supplier name. Use null for empty fields. Return ONLY JSON
 
 Subject: {email_subject}
 Body: {email_body}"""
-        
-        response = await asyncio.to_thread(
-            lambda: genai_client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=prompt
+
+    response = None
+    for attempt in range(1, GENAI_MAX_RETRIES + 1):
+        try:
+            response = await asyncio.to_thread(
+                lambda: genai_client.models.generate_content(
+                    model="gemini-2.5-flash-lite",
+                    contents=prompt
+                )
             )
-        )
+            break
+        except Exception as e:
+            is_retryable = _is_retryable_genai_error(e)
+            is_last_attempt = attempt == GENAI_MAX_RETRIES
+            if (not is_retryable) or is_last_attempt:
+                logger.error(f"Error extracting insights with Generative AI: {e}")
+                return None
+
+            # Exponential backoff with small jitter for transient provider pressure.
+            delay = (GENAI_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))) + random.uniform(0, 0.5)
+            logger.warning(
+                "Transient Gemini error on attempt %s/%s; retrying in %.2fs: %s",
+                attempt,
+                GENAI_MAX_RETRIES,
+                delay,
+                e,
+            )
+            await asyncio.sleep(delay)
         
-        if response.text:
+    try:
+        if response and response.text:
             try:
                 json_str = response.text.strip()
                 # Handle markdown code blocks
@@ -156,6 +196,20 @@ async def process_supplier_responses(
                 
                 insights.append(insight)
                 logger.info(f"Extracted insight from {insight.supplier}")
+            else:
+                # Keep inbound reply metadata even when AI extraction fails,
+                # so the caller can still mark supplier reply state and store email.
+                from_addr = email.get('from', '') or 'Unknown Supplier'
+                supplier_name = from_addr.split('<')[0].strip() if '<' in from_addr else from_addr
+                insights.append(InsightData(
+                    supplier=supplier_name or 'Unknown Supplier',
+                    email_body=email.get('body'),
+                    from_email=email.get('from'),
+                    message_id=email.get('id'),
+                    email_subject=email.get('subject'),
+                    email_date=email.get('date'),
+                ))
+                logger.warning("AI extraction failed for %s; preserving raw email for reply tracking", from_addr)
         except Exception as e:
             logger.error(f"Error processing email from {email.get('from')}: {e}")
             continue

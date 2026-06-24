@@ -14,6 +14,8 @@ try:
     from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
     import google.auth
+    import httplib2
+    import google_auth_httplib2
     GOOGLE_API_CLIENT_AVAILABLE = True
 except ImportError:
     GOOGLE_API_CLIENT_AVAILABLE = False
@@ -61,12 +63,17 @@ def get_gmail_service(scopes: List[str]):
     # Use Application Default Credentials
     creds, _ = google.auth.default(scopes=scopes)
     
+    # Use a configured transport timeout to avoid httplib2 timeout warnings.
+    http = httplib2.Http(timeout=60)
+
     # If using service account, delegate to impersonate user
     if hasattr(creds, 'with_subject'):
         delegated_creds = creds.with_subject(GMAIL_IMPERSONATE_USER)
-        return build('gmail', 'v1', credentials=delegated_creds, cache_discovery=False)
+        authed_http = google_auth_httplib2.AuthorizedHttp(delegated_creds, http=http)
+        return build('gmail', 'v1', http=authed_http, cache_discovery=False)
     else:
-        return build('gmail', 'v1', credentials=creds, cache_discovery=False)
+        authed_http = google_auth_httplib2.AuthorizedHttp(creds, http=http)
+        return build('gmail', 'v1', http=authed_http, cache_discovery=False)
 
 
 def get_gmail_send_service():

@@ -531,27 +531,36 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
             db.add(email_record)
 
             # Check if insight already exists
-            existing_query = select(Insight).where(
-                Insight.job_id == job_id,
-                Insight.supplier == insight_data.supplier
-            )
-            existing_result = await db.execute(existing_query)
-            existing = existing_result.scalar_one_or_none()
-            
-            if not existing:
-                insight = Insight(
-                    job_id=job_id,
-                    supplier=insight_data.supplier or "Unknown",
-                    contact_person=insight_data.contact_person,
-                    product=insight_data.product,
-                    quantity=insight_data.quantity,
-                    price=insight_data.price,
-                    delivery_date=insight_data.delivery_date,
-                    email_body=insight_data.email_body,
-                    extracted_at=datetime.utcnow()
+            has_structured_insight = any([
+                insight_data.contact_person,
+                insight_data.product,
+                insight_data.quantity,
+                insight_data.price,
+                insight_data.delivery_date,
+            ])
+
+            if has_structured_insight:
+                existing_query = select(Insight).where(
+                    Insight.job_id == job_id,
+                    Insight.supplier == insight_data.supplier
                 )
-                db.add(insight)
-                inserted_count += 1
+                existing_result = await db.execute(existing_query)
+                existing = existing_result.scalar_one_or_none()
+
+                if not existing:
+                    insight = Insight(
+                        job_id=job_id,
+                        supplier=insight_data.supplier or "Unknown",
+                        contact_person=insight_data.contact_person,
+                        product=insight_data.product,
+                        quantity=insight_data.quantity,
+                        price=insight_data.price,
+                        delivery_date=insight_data.delivery_date,
+                        email_body=insight_data.email_body,
+                        extracted_at=datetime.utcnow()
+                    )
+                    db.add(insight)
+                    inserted_count += 1
 
             if matched_supplier:
                 matched_supplier.replied = True
@@ -561,11 +570,13 @@ async def refresh_insights(job_id: int, db: AsyncSession = Depends(get_db)):
         if replied_supplier_ids:
             logger.info(f"Marked {len(replied_supplier_ids)} suppliers as replied for job {job_id}")
         
-        # Count ALL insights for total_responses (including new ones just added)
-        all_insights_query = select(Insight).where(Insight.job_id == job_id)
-        all_insights_result = await db.execute(all_insights_query)
-        all_insights = all_insights_result.scalars().all()
-        job.total_responses = len(all_insights)
+        # Keep total_responses aligned with real supplier reply state.
+        replied_count_query = select(JobSupplierState).where(
+            JobSupplierState.job_id == job_id,
+            JobSupplierState.replied == True
+        )
+        replied_count_result = await db.execute(replied_count_query)
+        job.total_responses = len(replied_count_result.scalars().all())
         
         # Commit all changes together
         await db.commit()
