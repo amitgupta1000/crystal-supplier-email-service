@@ -359,6 +359,8 @@ async def start_job(request: StartJobRequest, db: AsyncSession = Depends(get_db)
         
         # Record targeted suppliers
         sent_count = 0
+        delayed_send_count = 0
+        blocked_time_seconds = 0.0
         for email in request.supplier_emails:
             email_lower = email.lower()
             domain = email.split("@")[-1] if email else ""
@@ -404,7 +406,13 @@ async def start_job(request: StartJobRequest, db: AsyncSession = Depends(get_db)
             Procurement Team</p>
             """
             
-            success = await send_email_with_attachments(subject, body, email)
+            send_metrics = {}
+            success = await send_email_with_attachments(subject, body, email, send_metrics=send_metrics)
+
+            policy_wait_seconds = float(send_metrics.get("policy_wait_seconds", 0.0) or 0.0)
+            blocked_time_seconds += policy_wait_seconds
+            if policy_wait_seconds > 0.001:
+                delayed_send_count += 1
             
             if success:
                 sent_count += 1
@@ -420,6 +428,15 @@ async def start_job(request: StartJobRequest, db: AsyncSession = Depends(get_db)
                 db.add(email_record)
             else:
                 logger.warning(f"Failed to send email to {email}")
+
+        logger.info(
+            "Outbound policy metrics for job %s: attempted=%s sent=%s delayed=%s blocked_time_s=%.2f",
+            new_job.id,
+            len(request.supplier_emails),
+            sent_count,
+            delayed_send_count,
+            blocked_time_seconds,
+        )
         
         await db.commit()
         

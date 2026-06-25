@@ -8,6 +8,7 @@ import logging
 import asyncio
 from typing import List, Optional
 from datetime import datetime
+from .outbound_policy import get_outbound_policy
 
 try:
     from google.oauth2 import service_account
@@ -90,7 +91,8 @@ async def send_email_with_attachments(
     subject: str,
     body: str,
     to_email: str,
-    attachments: Optional[List[str]] = None
+    attachments: Optional[List[str]] = None,
+    send_metrics: Optional[dict] = None,
 ) -> bool:
     if not GOOGLE_API_CLIENT_AVAILABLE:
         logger.error("Google API client libraries not installed.")
@@ -104,6 +106,14 @@ async def send_email_with_attachments(
     except Exception as e:
         logger.error(f"Failed to initialize Gmail service: {e}")
         return False
+
+    # Apply outbound pacing policy before every send to reduce spam-like bursts.
+    waited_before_reserve, jitter_delay = await get_outbound_policy().reserve_send_slot(to_email)
+    if jitter_delay > 0:
+        await asyncio.sleep(jitter_delay)
+    total_policy_wait = waited_before_reserve + jitter_delay
+    if isinstance(send_metrics, dict):
+        send_metrics["policy_wait_seconds"] = total_policy_wait
 
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
